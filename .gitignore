@@ -1,0 +1,14 @@
+/target
+Cargo.lock.bak
+*.log
+.DS_Store
+.direnv
+.env
+
+# rendered images anywhere except committed docs/screens and test goldens
+*.png
+*.jpg
+*.jpeg
+*.webp
+!docs/screens/**
+!crates/**/tests/golden/**
