@@ -12,3 +12,4 @@ Cargo.lock.bak
 *.webp
 !docs/screens/**
 !crates/**/tests/golden/**
+!test/fixture.png
