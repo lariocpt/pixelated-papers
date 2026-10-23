@@ -66,17 +66,43 @@ pub fn run_foreground(paths: Paths) -> Result<()> {
     let sock_fd = listener.as_raw_fd();
 
     while daemon.running && running.load(std::sync::atomic::Ordering::SeqCst) {
-        let _ = conn.flush();
-        let _ = queue.dispatch_pending(&mut daemon);
+        if let Err(e) = conn.flush() {
+            log::error!("conn.flush: {e}");
+        }
+        // Drain wayland events: prepare_read → poll → read → dispatch_pending.
+        // This is the documented manual-loop pattern; dispatch_pending alone
+        // never reads the socket, which is why globals never arrived before.
+        let guard = queue.prepare_read();
+        let (wl_ready, sock_ready) = poll2(wayland_fd, sock_fd, Duration::from_millis(300));
+        if wl_ready {
+            if let Some(g) = guard {
+                if let Err(e) = g.read() {
+                    use wayland_client::backend::WaylandError;
+                    match e {
+                        WaylandError::Io(ref io)
+                            if io.kind() == std::io::ErrorKind::WouldBlock => {}
+                        _ => {
+                            log::error!("read_events: {e}");
+                            daemon.running = false;
+                        }
+                    }
+                }
+            }
+        }
+        match queue.dispatch_pending(&mut daemon) {
+            Ok(n) if n > 0 => log::debug!("dispatched {n} wayland events"),
+            Err(wayland_client::DispatchError::Backend(e)) => {
+                log::error!("dispatch backend error: {e}");
+                daemon.running = false;
+            }
+            _ => {}
+        }
 
-        // one IPC client per loop tick (commands are tiny & sequential)
-        if poll(&[(sock_fd, true)], Duration::from_millis(0)) {
+        // IPC: accept + serve one client per tick (commands are tiny)
+        if sock_ready {
             handle_client(&listener, &mut daemon, &conn);
         }
 
-        let _ = conn.flush();
-
-        let _ = poll(&[(wayland_fd, true)], Duration::from_millis(300));
         if !running_fd_check.load(std::sync::atomic::Ordering::SeqCst) {
             log::info!("signal received; shutting down");
             daemon.running = false;
@@ -176,17 +202,19 @@ fn status_report(daemon: &Daemon) -> StatusReport {
     }
 }
 
-/// poll(2) helper: fds of (fd, POLLIN); true if any became ready.
-fn poll(fds: &[(RawFd, bool)], timeout: Duration) -> bool {
-    let mut pfds: Vec<libc::pollfd> = fds
-        .iter()
-        .map(|(fd, _)| libc::pollfd {
-            fd: *fd,
-            events: libc::POLLIN,
-            revents: 0,
-        })
-        .collect();
+/// poll(2) on exactly the two loop fds; returns per-fd POLLIN readiness.
+fn poll2(fd_a: RawFd, fd_b: RawFd, timeout: Duration) -> (bool, bool) {
+    let mut pfds = [
+        libc::pollfd { fd: fd_a, events: libc::POLLIN, revents: 0 },
+        libc::pollfd { fd: fd_b, events: libc::POLLIN, revents: 0 },
+    ];
     let ms = timeout.as_millis().min(i32::MAX as u128) as i32;
-    let rc = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, ms) };
-    rc > 0 && pfds.iter().any(|p| p.revents & libc::POLLIN != 0)
+    let rc = unsafe { libc::poll(pfds.as_mut_ptr(), 2, ms) };
+    if rc <= 0 {
+        return (false, false);
+    }
+    (
+        pfds[0].revents & libc::POLLIN != 0,
+        pfds[1].revents & libc::POLLIN != 0,
+    )
 }
