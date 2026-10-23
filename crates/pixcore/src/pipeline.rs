@@ -2,7 +2,7 @@
 //! absolute-minimum canvas → (optional) median-cut palette → nearest-neighbor
 //! stretch. Deterministic: same input bytes ⇒ same output bytes.
 
-use image::{GenericImageView, ImageBuffer, Rgba, RgbaImage};
+use image::{ImageBuffer, Rgba, RgbaImage};
 
 use crate::placement::{Rect, View};
 
@@ -30,9 +30,10 @@ pub fn crop(src: &RgbaImage, r: Rect) -> RgbaImage {
     let w = w.min(src.width() - x);
     let h = h.min(src.height() - y);
     let mut out = ImageBuffer::new(w, h);
-    for (ox, oy) in out.enumerate_pixels_mut() {
-        *ox = src.get_pixel(x + ox, y + oy);
+    for (ox, oy, px) in out.enumerate_pixels_mut() {
+        *px = *src.get_pixel(x + ox, y + oy);
     }
+    out
 }
 
 /// Area-average downscale: iterative halving (box2) then a final exact box.
@@ -58,7 +59,7 @@ fn box_halve(src: &RgbaImage) -> RgbaImage {
     let (nw, nh) = (w / 2, h / 2);
     let mut out = ImageBuffer::new(nw, nh);
     for (x, y, px) in out.enumerate_pixels_mut() {
-        let mut acc = [u32; 4];
+        let mut acc = [0u32; 4];
         let [a, b, c, d] = [
             src.get_pixel(x * 2, y * 2).0,
             src.get_pixel(x * 2 + 1, y * 2).0,
@@ -83,7 +84,7 @@ fn box_to(src: &RgbaImage, tw: u32, th: u32) -> RgbaImage {
         let x1 = ((tx as u64 + 1) * sw / tw).max(x0 + 1).min(sw);
         let y0 = ty as u64 * sh / th;
         let y1 = ((ty as u64 + 1) * sh / th).max(y0 + 1).min(sh);
-        let mut acc = [u64; 4];
+        let mut acc = [0u64; 4];
         let mut n = 0u64;
         for yy in y0..y1 {
             for xx in x0..x1 {
@@ -216,9 +217,9 @@ pub mod testsrc {
         let mut img = ImageBuffer::new(64, 64);
         for (x, y, px) in img.enumerate_pixels_mut() {
             let base = [
-                ((x as u32 * 4) % 256) as u8,
-                ((y as u32 * 6) % 256) as u8,
-                (((x + y) as u32 * 3) % 256) as u8,
+                ((x * 4) % 256) as u8,
+                ((y * 6) % 256) as u8,
+                (((x + y) * 3) % 256) as u8,
             ];
             let a = if x < 8 { 128 } else { 255 };
             *px = Rgba([base[0], base[1], base[2], a]);
@@ -247,13 +248,25 @@ mod tests {
 
     #[test]
     fn variant_canvas_is_absolute_minimum() {
-        let img = testsrc::gradient64();
+        // big source (real case): canvas is exactly ⌈dest/B⌉ per axis
+        let big = testsrc::photo128x80();
+        let big = downscale(&big, 128, 80); // already that size; identity
+        let _ = big;
+        let src = image::ImageBuffer::from_fn(512, 512, |x, y| {
+            image::Rgba([(x % 250) as u8, (y % 250) as u8, 100, 255])
+        });
         for p in [Placement::Fit, Placement::CoverGutter, Placement::CoverCrop, Placement::Stretch] {
-            let v = view((64, 64), (1920, 1080), p, 24);
-            let var = downscale_to_variant(&img, &v, 16);
-            assert_eq!(var.width(), v.dest.w.div_ceil(16));
-            assert_eq!(var.height(), v.dest.h.div_ceil(16));
+            let v = view((512, 512), (1920, 1080), p, 24);
+            let var = downscale_to_variant(&src, &v, 16);
+            assert_eq!(var.width(), v.dest.w.div_ceil(16), "{p}");
+            assert_eq!(var.height(), v.dest.h.div_ceil(16), "{p}");
         }
+        // small source (upscaling case): never upscale — canvas clamps to the
+        // window; composite stretches it to dest
+        let small = testsrc::gradient64();
+        let v = view((64, 64), (1920, 1080), Placement::Fit, 0);
+        let var = downscale_to_variant(&small, &v, 16);
+        assert_eq!((var.width(), var.height()), (64, 64));
     }
 
     #[test]
@@ -263,8 +276,8 @@ mod tests {
             if x % 2 == 0 && y % 2 == 0 { *p = Rgba([12, 196, 44, 255]); }
         }
         let down = downscale(&img, 16, 16);
-        // mean of the 4 checkerboard values: (10+12)/2 etc.
-        assert_eq!(down.get_pixel(3, 3).0, [11, 198, 42, 255]);
+        // 1/4 of pixels are [12,196,44], 3/4 are [10,200,40] ⇒ weighted mean
+        assert_eq!(down.get_pixel(3, 3).0, [11, 199, 41, 255]);
     }
 
     #[test]

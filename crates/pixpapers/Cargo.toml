@@ -1,0 +1,33 @@
+[package]
+name = "pixpapers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+readme = "../../README.md"
+keywords = ["wayland", "niri", "wallpaper", "pixel-art", "layer-shell"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+pixcore = { workspace = true }
+clap = { workspace = true }
+clap_complete = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+image = { workspace = true }
+dirs = { workspace = true }
+signal-hook = { workspace = true }
+libc = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+wayland-client = { workspace = true }
+wayland-protocols = { workspace = true }
+wayland-protocols-wlr = { workspace = true }
+
+[dev-dependencies]
+snapbox = { workspace = true }

@@ -4,12 +4,13 @@
 use std::fs;
 use std::path::Path;
 
-use image::{DynamicImage, GenericImageView, ImageEncoder, ImageFormat};
+use image::{GenericImageView, ImageEncoder, ImageFormat};
 
 use crate::config::Optimize;
 use crate::error::{PixError, Result};
 use crate::pipeline::downscale;
 
+#[derive(Debug)]
 pub struct Optimized {
     /// Encoded bytes for `library/<id>/original.<ext>`.
     pub bytes: Vec<u8>,
@@ -63,15 +64,15 @@ pub fn optimize(src_path: &Path, cfg: &Optimize) -> Result<Optimized> {
     let (ext, note) = if has_alpha || was_png {
         let enc = image::codecs::png::PngEncoder::new(&mut out);
         enc
-            .write_image(capped.as_raw(), cw, ch, image::ColorType::Rgba8)
+            .write_image(capped.as_raw(), cw, ch, image::ExtendedColorType::Rgba8)
             .map_err(|e| PixError::other(format!("png encode: {e}")))?;
         let why = if has_alpha { "png(alpha)" } else { "png" };
         ("png", why.to_string())
     } else {
-        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, cfg.jpeg_quality);
+        let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, cfg.jpeg_quality);
         // JPEG has no alpha; flatten onto black for any stray transparency.
         let opaque = strip_alpha(&capped);
-        enc.write_image(opaque.as_raw(), cw, ch, image::ColorType::Rgb8)
+        enc.write_image(opaque.as_raw(), cw, ch, image::ExtendedColorType::Rgb8)
             .map_err(|e| PixError::other(format!("jpeg encode: {e}")))?;
         ("jpg", format!("jpeg q{}", cfg.jpeg_quality))
     };
@@ -95,7 +96,6 @@ fn strip_alpha(img: &image::RgbaImage) -> image::RgbImage {
 mod tests {
     use super::*;
     use crate::pipeline::testsrc;
-    use image::ImageEncoder as _;
 
     fn write_tmp(img: &image::RgbaImage, fmt: ImageFormat) -> tempfile::NamedTempFile {
         let ext = match fmt { ImageFormat::Png => "png", _ => "jpg" };
@@ -103,11 +103,11 @@ mod tests {
         let mut buf = Vec::new();
         if fmt == ImageFormat::Png {
             let enc = image::codecs::png::PngEncoder::new(&mut buf);
-            enc.write_image(img.as_raw(), img.width(), img.height(), image::ColorType::Rgba8).unwrap();
+            enc.write_image(img.as_raw(), img.width(), img.height(), image::ExtendedColorType::Rgba8).unwrap();
         } else {
             let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 90);
             let rgb = strip_alpha(img);
-            enc.write_image(rgb.as_raw(), rgb.width(), rgb.height(), image::ColorType::Rgb8).unwrap();
+            enc.write_image(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8).unwrap();
         }
         std::fs::write(f.path(), &buf).unwrap();
         let _ = ext;

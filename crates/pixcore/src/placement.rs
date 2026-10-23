@@ -171,7 +171,7 @@ mod tests {
         // portrait src ⇒ pillarbox (borders left/right)
         let vi = v((1000, 2000), (1920, 1080), Placement::Fit, 0);
         assert_eq!(vi.dest.h, 1080);
-        assert_eq!(vi.dest.w, (1000.0 * 1080.0 / 2000.0).floor() as u32);
+        assert_eq!(vi.dest.w, ((1000.0f64 * 1080.0 / 2000.0).floor()) as u32);
         assert_eq!(vi.dest.x, (1920 - vi.dest.w) / 2);
         assert_eq!(vi.window, Rect::new(0, 0, 1000, 2000));
     }
@@ -181,7 +181,7 @@ mod tests {
         let vi = v((1000, 2000), (1920, 1080), Placement::CoverCrop, 0);
         assert_eq!(vi.dest, Rect::new(0, 0, 1920, 1080));
         // portrait source cropped vertically, centered (integer floor)
-        let expected_h = ((1000.0 * 1080.0 / 1920.0).floor() as u32).clamp(1, 2000);
+        let expected_h = ((1000.0f64 * 1080.0 / 1920.0).floor() as u32).clamp(1, 2000);
         assert_eq!(vi.window.h, expected_h);
         assert_eq!(vi.window.y, (2000 - expected_h) / 2);
         assert_eq!(vi.window.w, 1000);
@@ -192,7 +192,7 @@ mod tests {
         let vi = v((1000, 1000), (1920, 1080), Placement::CoverGutter, 24);
         assert_eq!(vi.dest, Rect::new(24, 24, 1872, 1032));
         assert_eq!(vi.window.w, 1000); // square src → width stays
-        assert_eq!(vi.window.h, ((1000.0 * 1032.0 / 1872.0).floor() as u32).clamp(1, 1000));
+        assert_eq!(vi.window.h, ((1000.0f64 * 1032.0 / 1872.0).floor() as u32).clamp(1, 1000));
     }
 
     #[test]
@@ -213,7 +213,7 @@ mod tests {
     #[test]
     fn proptest_containment_and_coverage() {
         use proptest::prelude::*;
-        let dims = prop::strategy::Union::new(vec![1..6000u32]);
+        let dims = 1..6000u32;
         proptest!(|(sw in &dims, sh in &dims, ow in &dims, oh in &dims, g in 0..=500u32)| {
             for p in [Placement::Fit, Placement::CoverGutter, Placement::CoverCrop, Placement::Stretch] {
                 let vi = view((sw, sh), (ow, oh), p, g);

@@ -67,12 +67,10 @@ pub(crate) fn stretch_into_u32(src: &RgbaImage, dest: Rect, buf: &mut [u32], out
     }
     for dy in 0..dh {
         let sy = (dy * sh / dh) as u32;
-        let srow = (sy as usize) * sw as usize;
         let brow = (dest.y as u64 + dy) as usize * out_w as usize;
         for dx in 0..dw {
             let sx = (dx * sw / dw) as u32;
-            let p = src.as_raw()[srow + sx as usize].0;
-            // XRGB8888 buffer word: opaque + rgb
+            let p = src.get_pixel(sx, sy).0;
             buf[brow + dest.x as usize + dx as usize] =
                 0xFF00_0000 | ((p[0] as u32) << 16) | ((p[1] as u32) << 8) | (p[2] as u32);
         }

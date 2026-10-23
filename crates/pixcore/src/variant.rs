@@ -63,11 +63,12 @@ pub fn generate(
 /// Run the pipeline for one (settings, output size) from the stored original.
 pub fn generate_from_file(orig: &std::path::Path, s: &ResolvedSettings, out: (u32, u32)) -> Result<image::RgbaImage> {
     let bytes = fs::read(orig).map_err(|e| PixError::io(orig, e))?;
-    let img = image::ImageReader::new(std::io::Cursor::new(&bytes))
+    let reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
         .with_guessed_format()
-        .and_then(|r| r.decode())
-        .map_err(|e| PixError::Decode { path: orig.to_path_buf(), reason: e.to_string() })
-        .map_err(|e: image::ImageError| PixError::other(e.to_string()))?;
+        .map_err(|e| PixError::Decode { path: orig.to_path_buf(), reason: e.to_string() })?;
+    let img = reader
+        .decode()
+        .map_err(|e| PixError::Decode { path: orig.to_path_buf(), reason: e.to_string() })?;
     Ok(generate_from_image(&img.into_rgba8(), s, out))
 }
 
@@ -89,63 +90,79 @@ pub fn generate_from_image(orig: &image::RgbaImage, s: &ResolvedSettings, out: (
 /// Encode a variant as PNG. With `palette`, write a true palette PNG via the
 /// `png` crate (absolute-minimum bytes); otherwise plain RGBA.
 pub fn encode_variant(img: &image::RgbaImage, palette: bool) -> Vec<u8> {
-    let mut out = Vec::new();
     if palette {
-        let pal = pipeline::median_cut(img, 256);
-        let mut pal_bytes = Vec::with_capacity(pal.len() * 3);
-        for c in &pal {
-            pal_bytes.extend_from_slice(&[c.0[0], c.0[1], c.0[2]]);
+        if let Some(bytes) = encode_palette_png(img) {
+            return bytes;
         }
-        let indices: Vec<u8> = img
-            .pixels()
-            .map(|p| {
-                if p.0[3] <= 8 {
-                    return 0u8; // transparent maps to index 0-ish; alpha kept separately below
-                }
-                let mut best = 0usize;
-                let mut bestd = u64::MAX;
-                for (i, c) in pal.iter().enumerate() {
-                    let dr = p.0[0] as i64 - c.0[0] as i64;
-                    let dg = p.0[1] as i64 - c.0[1] as i64;
-                    let db = p.0[2] as i64 - c.0[2] as i64;
-                    let d = (dr * dr + dg * dg + db * db) as u64;
-                    if d < bestd {
-                        bestd = d;
-                        best = i;
-                    }
-                }
-                best as u8
-            })
-            .collect();
-        let mut enc = png::Encoder::new(&mut out, img.width(), img.height());
-        enc.set_color_type(png::ColorType::Rgba);
-        enc.set_bit_depth(png::BitDepth::Eight);
-        // transparent palette entries: add a fully transparent color so RGBA
-        // stays valid; index 0 reserved for transparent pixels.
-        let mut rgba_pal: Vec<u8> = vec![0, 0, 0, 0];
-        for c in &pal {
-            rgba_pal.extend_from_slice(&[c.0[0], c.0[1], c.0[2], 255]);
-        }
-        let indices: Vec<u8> = std::iter::zip(img.pixels(), indices.iter())
-            .map(|(p, &i)| if p.0[3] <= 8 { 0 } else { i + 1 })
-            .collect();
-        enc.set_palette(rgba_pal);
-        if let Ok(mut w) = enc.write_header() {
-            if w.write_image_data(&indices).is_ok() {
-                return out;
-            }
-        }
-        // fall through to RGBA on any encoder trouble
     }
+    let mut out = Vec::new();
     let enc = image::codecs::png::PngEncoder::new(&mut out);
     let _ = image::ImageEncoder::write_image(
-        &enc,
+        enc,
         img.as_raw(),
         img.width(),
         img.height(),
-        image::ColorType::Rgba8,
+        image::ExtendedColorType::Rgba8,
     );
     out
+}
+
+/// Palette PNG with index 0 reserved for transparent pixels. `None` on any
+/// encoder trouble (caller falls back to RGBA).
+fn encode_palette_png(img: &image::RgbaImage) -> Option<Vec<u8>> {
+    // index 0 (transparent) + palette must fit 8-bit indexing (≤256 entries).
+    let pal = pipeline::median_cut(img, 255);
+    // PLTE: 3 bytes per entry; index 0 is a placeholder black, tRNS makes it
+    // fully transparent.
+    let mut plte: Vec<u8> = vec![0, 0, 0];
+    for c in &pal {
+        plte.extend_from_slice(&[c.0[0], c.0[1], c.0[2]]);
+    }
+    let indices: Vec<u8> = img
+        .pixels()
+        .map(|p| {
+            if p.0[3] <= 8 {
+                return 0u8;
+            }
+            let mut best = 1usize;
+            let mut bestd = u64::MAX;
+            for (i, c) in pal.iter().enumerate() {
+                let dr = p.0[0] as i64 - c.0[0] as i64;
+                let dg = p.0[1] as i64 - c.0[1] as i64;
+                let db = p.0[2] as i64 - c.0[2] as i64;
+                let d = (dr * dr + dg * dg + db * db) as u64;
+                if d < bestd {
+                    bestd = d;
+                    best = i + 1;
+                }
+            }
+            best as u8
+        })
+        .collect();
+    let mut buf = Vec::new();
+    let ok = {
+        let mut enc = png::Encoder::new(&mut buf, img.width(), img.height());
+        enc.set_color(png::ColorType::Indexed);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.set_palette(plte);
+        enc.set_trns(vec![0u8]); // only index 0 is transparent
+        match enc.write_header() {
+            Ok(mut w) => w.write_image_data(&indices).is_ok(),
+            Err(_) => false,
+        }
+    };
+    if ok { Some(buf) } else { None }
+}
+
+/// Decode any bytes we accept (used by export/tests).
+pub fn decode_any(bytes: &[u8]) -> Result<image::RgbaImage> {
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| PixError::other(e.to_string()))?;
+    let img = reader
+        .decode()
+        .map_err(|e| PixError::other(e.to_string()))?;
+    Ok(img.into_rgba8())
 }
 
 /// Locate the stored original for an entry (extension recorded in manifest;
@@ -218,7 +235,7 @@ mod tests {
         let mut buf = Vec::new();
         {
             let enc = image::codecs::png::PngEncoder::new(&mut buf);
-            image::ImageEncoder::write_image(&enc, img.as_raw(), img.width(), img.height(), image::ColorType::Rgba8).unwrap();
+            image::ImageEncoder::write_image(enc, img.as_raw(), img.width(), img.height(), image::ExtendedColorType::Rgba8).unwrap();
         }
         std::fs::write(paths.entry_dir(id).join("original.png"), &buf).unwrap();
         let s = settings("16");

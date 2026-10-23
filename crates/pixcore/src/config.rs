@@ -91,28 +91,20 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| PixError::io(parent, e))?;
         }
-        let tmp = tmp_path(path);
         let text = toml::to_string_pretty(self).map_err(|e| PixError::other(e.to_string()))?;
         write_atomic(path, text.as_bytes()).map_err(|e| PixError::io(path, e))?;
-        let _ = tmp;
         Ok(())
     }
 }
 
-pub(crate) fn tmp_path(path: &Path) -> std::path::PathBuf {
-    path.with_file_name(format!(
-        "{}.tmp",
-        path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
-    ))
-}
-
 /// Write `data` to `path` atomically (unique tmp in the same dir + rename).
 pub(crate) fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
     let dir = path.parent().filter(|p| !p.as_os_str().is_empty());
-    let mut opts = tempfile::NamedTempFile::new_in(dir.unwrap_or(Path::new(".")))?;
-    std::io::Write::write_all(&mut opts, data)?;
-    opts.flush()?;
-    opts.persist(path).map_err(|e| e.error)?;
+    let mut tmp = tempfile::NamedTempFile::new_in(dir.unwrap_or(Path::new(".")))?;
+    tmp.write_all(data)?;
+    tmp.flush()?;
+    tmp.persist(path).map_err(|e| e.error)?;
     Ok(())
 }
 
@@ -128,6 +120,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn round_trip_and_malformed_error() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
