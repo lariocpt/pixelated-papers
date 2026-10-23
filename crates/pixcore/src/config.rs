@@ -1,0 +1,172 @@
+use std::fs;
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+
+use crate::color::RgbCss;
+use crate::error::{PixError, Result};
+use crate::placement::Placement;
+use crate::preset::Pixel;
+
+/// Everything configurable lives here. Written atomically; missing file
+/// means defaults (the file is only created on first explicit change).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Config {
+    /// Master pixelation switch (R6). `false` ⇒ render originals, placement unchanged.
+    pub enabled: bool,
+    /// Default look for wallpapers without an override (R2).
+    pub default_pixel: Pixel,
+    pub default_placement: Placement,
+    pub default_bg_color: RgbCss,
+    /// Only used by `cover-gutter`.
+    pub default_gutter_px: u32,
+    /// Reserved visibility floor (0 = off; presets are exact by design).
+    pub min_visible_px: u32,
+    /// Palette-reduce variants (median-cut ≤256 colors) for tiny PNGs.
+    pub palette: bool,
+    pub optimize: Optimize,
+    pub daemon: DaemonConfig,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Optimize {
+    /// Longest edge for stored originals (clamped 1080..=7680).
+    pub max_side: u32,
+    pub jpeg_quality: u8,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DaemonConfig {
+    /// Log level: error | warn | info | debug | trace.
+    pub log: String,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            default_pixel: Pixel::B16,
+            default_placement: Placement::Fit,
+            default_bg_color: RgbCss::BLACK,
+            default_gutter_px: 24,
+            min_visible_px: 0,
+            palette: true,
+            optimize: Optimize::default(),
+            daemon: DaemonConfig::default(),
+        }
+    }
+}
+
+impl Default for Optimize {
+    fn default() -> Self {
+        Self { max_side: 3840, jpeg_quality: 87 }
+    }
+}
+
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self { log: "info".into() }
+    }
+}
+
+impl Config {
+    /// Load from `path`. Missing file ⇒ defaults (no error, no write).
+    /// Malformed ⇒ error naming the path (never silently overwrite).
+    pub fn load(path: &Path) -> Result<Self> {
+        match fs::read_to_string(path) {
+            Ok(text) => toml::from_str(&text).map_err(|e| PixError::Config {
+                path: path.to_path_buf(),
+                reason: e.to_string(),
+            }),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => Err(PixError::io(path, e)),
+        }
+    }
+
+    /// Atomic save: serialize → `<path>.tmp` → rename.
+    pub fn save(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| PixError::io(parent, e))?;
+        }
+        let tmp = tmp_path(path);
+        let text = toml::to_string_pretty(self).map_err(|e| PixError::other(e.to_string()))?;
+        write_atomic(path, text.as_bytes()).map_err(|e| PixError::io(path, e))?;
+        let _ = tmp;
+        Ok(())
+    }
+}
+
+pub(crate) fn tmp_path(path: &Path) -> std::path::PathBuf {
+    path.with_file_name(format!(
+        "{}.tmp",
+        path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
+    ))
+}
+
+/// Write `data` to `path` atomically (unique tmp in the same dir + rename).
+pub(crate) fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let dir = path.parent().filter(|p| !p.as_os_str().is_empty());
+    let mut opts = tempfile::NamedTempFile::new_in(dir.unwrap_or(Path::new(".")))?;
+    std::io::Write::write_all(&mut opts, data)?;
+    opts.flush()?;
+    opts.persist(path).map_err(|e| e.error)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn missing_file_is_defaults() {
+        let p = Path::new("/nonexistent-dir-pixpapers/config.toml");
+        assert_eq!(Config::load(p).unwrap(), Config::default());
+    }
+
+    #[test]
+    fn round_trip_and_malformed_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut cfg = Config::default();
+        cfg.default_pixel = "32".parse().unwrap();
+        cfg.default_bg_color = "#123456".parse().unwrap();
+        cfg.save(&path).unwrap();
+        let loaded = Config::load(&path).unwrap();
+        assert_eq!(loaded, cfg);
+
+        fs::write(&path, "this is = not [valid").unwrap();
+        let err = Config::load(&path).unwrap_err().to_string();
+        assert!(err.contains(path.to_str().unwrap()), "error must name the path: {err}");
+    }
+
+    #[test]
+    fn defaults_match_plan() {
+        let c = Config::default();
+        assert!(c.enabled);
+        assert_eq!(c.default_pixel, Pixel::B16);
+        assert_eq!(c.default_placement, Placement::Fit);
+        assert_eq!(c.default_bg_color, RgbCss::BLACK);
+        assert_eq!(c.optimize.max_side, 3840);
+    }
+
+    proptest! {
+        #[test]
+        fn save_load_round_trips(q in 50u8..=100, g in 0u32..4096, enabled: bool, pal: bool) {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            let cfg = Config {
+                enabled,
+                palette: pal,
+                default_gutter_px: g,
+                optimize: Optimize { max_side: 3840, jpeg_quality: q },
+                ..Default::default()
+            };
+            cfg.save(&path).unwrap();
+            prop_assert_eq!(Config::load(&path).unwrap(), cfg);
+        }
+    }
+}
