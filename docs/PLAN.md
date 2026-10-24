@@ -321,3 +321,23 @@ hold. Commit after each step.
 | Daemon/niri restart interplay | wayland connection drop ⇒ daemon exits; next `set` auto-respawns; stale socket detection; optional systemd unit for auto-restart (step 5) |
 | `image` crate has no median-cut | implement it (~80 lines, deterministic, property-tested) in `pixcore::pipeline` |
 | Scope creep (TUI, X11, live wallpapers, palettes/dither per "era") | non-goals §1; v1.1 backlog section in README |
+
+---
+
+## 11. Retro — what actually happened (v0.1.0, 2026-10-24)
+
+Decisions and discoveries the steps above didn't anticipate. Full test
+record: [VERIFICATION.md](VERIFICATION.md); numbers: [PERF.md](PERF.md).
+
+| Item | Where the plan said → what is |
+|------|-------------------------------|
+| **cover-gutter semantics** (§10 Q1) | **Shipped as the mat margin** (ring in `bg_color`) — the blurred-bleed alternative was never confirmed, and the mat is honest to the name; if the bleed is ever wanted it stays a contained pipeline change, exactly as §10 predicted. |
+| **sctk drift risk** (§10) | moot — raw `wayland-client` 0.31 + `wayland-protocols-wlr` was chosen in step 3 (sctk dropped layer-shell conveniences we needed); quarantined in `daemon/wayland.rs` as planned. |
+| **Fractional scale** (§10) | the dev session *is* fractional 1.5: legacy `wl_output.scale=2` ⇒ buffers oversampled 5120×2880, compositor downscales, visually correct. SCALING.md documents the exactness bar + v0.2 viewporter path. |
+| **`dispatch_pending` trap** | `EventQueue::dispatch_pending` **never reads the socket** — the loop must be `prepare_read → poll → guard.read() → dispatch_pending` (commit `f5228d3`); a layer daemon that only dispatches pending hangs silently waiting for globals. |
+| **Compositor loss** | exit **43** + teardown + never-restart-on-43 (unit ships `RestartPreventExitStatus=43`); plan only said "daemon exits". |
+| **signal-hook silently broken here** | `flag::register` handlers *never fired* on the dev machine (V17); v0.1 dropped the dep for a 10-line raw `sigaction`. Lesson: measure your deps, even the boring ones. |
+| **`xtask`** (steps 7/9 mentions) | dropped — shell scripts (`test/bench-daemon.sh`) + clap's built-in `completions` + a hand-rolled man page covered the same jobs with zero extra workspace members. |
+| **`--cache-dir`** | skipped — hermetic `PIXPAPERS_HOME` already isolates the variant cache for benches. |
+| **§9.4 stretch optimization** | **skipped with evidence**: hot switch p95 45 ms « 100 ms bar; 4K stretch 11.6 ms inside it. The 4K@8 cold 105 ms is median-cut, one-time per new combo. |
+| **Palette variants** (§3, "subtly retro palette") | implemented and default-on — but VERIFICATION/PERF state plainly: `normal` is 1× (no magic), flat-art ratios are modest; the ≥100× headline is photographic sources only. |
