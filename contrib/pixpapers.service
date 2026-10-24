@@ -1,0 +1,38 @@
+# pixpapers — user service (per session, NOT a login-session requirement)
+#
+# Install:  cp contrib/pixpapers.service ~/.config/systemd/user/
+#           systemctl --user daemon-reload
+#           systemctl --user enable --now pixpapers
+#
+# The daemon needs WAYLAND_DISPLAY from the graphical session. User
+# services don't inherit it; pick ONE:
+#   a) import it once per boot from a session shell:
+#        systemctl --user import-env WAYLAND_DISPLAY XDG_RUNTIME_DIR
+#        systemctl --user restart pixpapers
+#   b) or skip the unit entirely and use niri autostart
+#      (`spawn "pixpapers" "daemon"`) — inherits everything for free.
+#
+# Anti-flap: exit 43 = "compositor is gone" (logout / niri restart).
+# Restarting into a dead session loops; we forbid it. The loser of a
+# socket race exits 1 with "already running" — also not restartable.
+
+[Unit]
+Description=pixelated-papers wallpaper daemon
+# niri/wlr session target names vary; keep it simple and session-agnostic.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/pixpapers daemon
+# Polite IPC stop; if the daemon is already gone this no-ops (|| true).
+ExecStop=/bin/sh -c '%h/.local/bin/pixpapers stop || true'
+Restart=on-failure
+RestartPreventExitStatus=1 43
+RestartSec=2
+# The daemon logs itself to ~/.local/state/pixpapers/log when spawned by
+# the CLI; under systemd let journald own stdout.
+Environment=PIXPAPERS_LOG=info
+
+[Install]
+WantedBy=graphical-session.target

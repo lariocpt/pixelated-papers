@@ -1,0 +1,39 @@
+# Maintainer: lario <lario@unsecure.example>   # draft — not AUR-published (step-7 decision)
+# Build: makepkg -si  (from a checkout at a release tag)
+pkgname=pixelated-papers
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Forced-pixelation wallpapers for niri and other wayland compositors"
+arch=('x86_64')
+url="https://github.com/lariocpt/pixelated-papers"
+license=('MIT' 'Apache-2.0')
+depends=('glibc')
+makedepends=('cargo' 'git')
+source=("git+${url}.git#tag=v${pkgver}")
+sha256sums=('SKIP')   # set from `git archive` once tags are public
+
+build() {
+  cd "$pkgname-$pkgver"
+  cargo build --release --locked -p pixpapers
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  cargo test --release --workspace --locked
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -Dm755 target/release/pixpapers "$pkgdir/usr/bin/pixpapers"
+  install -Dm644 docs/man/pixpapers.1 "$pkgdir/usr/share/man/man1/pixpapers.1"
+  install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+  install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+  install -Dm644 contrib/completions/pixpapers.bash \
+    "$pkgdir/usr/share/bash-completion/completions/pixpapers"
+  install -Dm644 contrib/completions/_pixpapers \
+    "$pkgdir/usr/share/zsh/site-functions/_pixpapers"
+  install -Dm644 contrib/completions/pixpapers.fish \
+    "$pkgdir/usr/share/fish/vendor_completions.d/pixpapers.fish"
+  install -Dm644 contrib/pixpapers.service \
+    "$pkgdir/usr/lib/systemd/user/pixpapers.service"
+}

@@ -1,0 +1,127 @@
+.\" pixpapers — forced-pixelation wallpapers for wayland
+.\" conservative roff: single-line macros, groff-man + mandoc clean
+.Dd October 24, 2026
+.Dt PIXPAPERS 1
+.Os
+.Sh NAME
+.Nm pixpapers
+.Nd forced-pixelation wallpapers for niri and other wayland compositors
+.Sh SYNOPSIS
+.Nm pixpapers
+.Ar command
+.Op Ar arguments
+.Sh DESCRIPTION
+.Nm pixpapers
+stores wallpapers, pixelates them at literal block sizes
+(8, 16, 32, 64, 128, or no pixelation as
+.Ar normal )
+and displays them on a wlr-layer-shell Background surface via a small
+daemon. The CLI owns all state; the daemon is a pure renderer that
+re-reads config on every apply. Pixelation is forced on everything the
+tool sets, except per-wallpaper
+.Ic pixel Ar normal
+or the global
+.Ic disable .
+.Ss Concepts
+.Bl -tag -width Ds
+.It Preset
+Pixel block size: 8 | 16 | 32 | 64 | 128 | normal (default 16).
+.It Placement
+.Ar fit
+(letterbox, default),
+.Ar cover-gutter
+(mat border in bg color),
+.Ar cover-crop ,
+.Ar stretch .
+.It Variants
+The displayed image is a cached tiny render (kilobytes), generated lazily
+from the stored original; switches never touch the original.
+.El
+.Sh COMMANDS
+.Bl -tag -width Ds
+.It Ic add Ar path Op Fl -title Ar t
+Add a wallpaper (deduplicated by content hash; re-encoded lossless-optimized).
+.It Ic list
+List the library.
+.It Ic remove Ar id
+Remove entry, original and variants.
+.It Ic set Ar id
+Apply now; auto-starts the daemon when WAYLAND_DISPLAY is set.
+.It Ic cycle Op Ar by
+Rotate the current wallpaper by
+.Ar by
+(default 1).
+.It Ic pixel Ar id Ar preset
+Per-wallpaper preset (see Concepts).
+.It Ic placement Ar id Ar placement
+Per-wallpaper placement.
+.It Ic bg Ar id Ar color
+Border/gutter color, #rrggbb.
+.It Ic gutter Ar id Ar px
+Gutter width for cover-gutter in output pixels.
+.It Ic default pixel|placement Ar value
+Change the global default for new/unset entries.
+.It Ic enable No / Ic disable
+Global pixelation on/off (disable renders originals only).
+.It Ic status Op Fl -json Op Fl -bench
+Daemon truth when running, filesystem view otherwise; --bench adds
+self-timed latencies, cache hit rate, RSS and fd counts.
+.It Ic export Ar id Ar WxH Op Fl -pixel Ar p Op Fl -placement Ar pl Op Fl -bg Ar c Op Fl -gutter Ar n Op Fl o Ar out
+Offline render with the daemon's exact composite path.
+.It Ic optimize Op Fl -all
+Re-run storage optimization over the library.
+.It Ic daemon
+Run the daemon in the foreground (you rarely need this; mutating
+commands spawn it detached).
+.It Ic stop
+Politely stop the running daemon (IPC).
+.It Ic completions Ar shell
+Print a completion script for bash, zsh or fish.
+.El
+.Sh EXIT CODES
+.Bl -tag -width Ds
+.It 0
+Success.
+.It 1
+User error (unknown id, bad value, already-running daemon).
+.It 2
+Internal error (I/O, decode, config corruption).
+.It 43
+Daemon only: the compositor went away (session end / niri restart).
+Surfaces, socket and pidfile were torn down. Do not restart the daemon
+on 43 into the same session.
+.El
+.Sh ENVIRONMENT
+.Bl -tag -width Ds
+.It Ev WAYLAND_DISPLAY
+Required for rendering and auto-spawn.
+.It Ev PIXPAPERS_HOME
+Hermetic root replacing data+config+state directories (tests, portable setups).
+.It Ev PIXPAPERS_LOG
+Daemon log filter (error..trace, default info).
+.El
+.Sh FILES
+.Pa ~/.config/pixpapers/config.toml
+.Pa ~/.local/share/pixpapers/library.json
+.Pa ~/.local/share/pixpapers/library/<id>/
+.Pa ~/.local/state/pixpapers/sock , pid , log
+.Sh EXAMPLES
+.Bd -literal -offset indent
+pixpapers add ~/Pictures/nebula.png
+pixpapers list
+pixpapers set 4a1c9f          # daemon auto-starts, wallpaper in ~90 ms
+pixpapers pixel 4a1c9f 8
+pixpapers bg 4a1c9f "#1a2b3c"
+pixpapers export 4a1c9f 3840x2160 --pixel 32 -o /tmp/preview.png
+pixpapers status --bench
+.Ed
+.Sh "EXIT BEHAVIOR NOTE"
+A daemon exiting 43 is normal at logout; systemd units must set
+RestartPreventExitStatus=43 (see contrib/pixpapers.service).
+.Sh BUGS
+https://github.com/lariocpt/pixelated-papers/issues
+Include: compositor + version, output mode/scale,
+.Ic pixpapers status
+output.
+.Sh AUTHORS
+MIT OR Apache-2.0 licensed; see LICENSE-MIT and LICENSE-APACHE.

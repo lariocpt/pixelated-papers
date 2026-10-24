@@ -1,0 +1,41 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: supply chain (soft-fail until it earns hard-fail)
+        continue-on-error: true
+        run: cargo install cargo-deny --locked && cargo deny check
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo build --release -p pixpapers
+      # headless layer of the smoke suite (offline is the default when
+      # WAYLAND_DISPLAY is absent, which ubuntu-latest guarantees)
+      - run: test/smoke.sh target/release/pixpapers
+      - name: docs drift — CLI.md covers every subcommand
+        run: |
+          set -eu
+          miss=0
+          for cmd in $(./target/release/pixpapers help 2>/dev/null \
+              | sed -n '/^Commands:/,/^$/p' | awk 'NR>1 {print $1}'); do
+            [ "$cmd" = help ] && continue
+            grep -q "\`$cmd" docs/CLI.md || { echo "CLI.md missing: $cmd"; miss=1; }
+          done
+          exit $miss
+  install-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install --path . --locked
+      - run: pixpapers --version && pixpapers status; test $? -le 2

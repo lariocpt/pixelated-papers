@@ -1,0 +1,626 @@
+#compdef pixpapers
+
+autoload -U is-at-least
+
+_pixpapers() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_pixpapers_commands" \
+"*::: :->pixpapers" \
+&& ret=0
+    case $state in
+    (pixpapers)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:pixpapers-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+'--title=[]:TITLE:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+':path:_files' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(remove)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(set)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(pixel)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+':pixel:_default' \
+&& ret=0
+;;
+(placement)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+':placement:_default' \
+&& ret=0
+;;
+(bg)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+':color:_default' \
+&& ret=0
+;;
+(gutter)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+':px:_default' \
+&& ret=0
+;;
+(default)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_pixpapers__subcmd__default_commands" \
+"*::: :->default" \
+&& ret=0
+
+    case $state in
+    (default)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:pixpapers-default-command-$line[1]:"
+        case $line[1] in
+            (pixel)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':pixel:_default' \
+&& ret=0
+;;
+(placement)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':placement:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_pixpapers__subcmd__default__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:pixpapers-default-help-command-$line[1]:"
+        case $line[1] in
+            (pixel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(placement)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(enable)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(disable)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(cycle)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+'::by:_default' \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+'--json[]' \
+'--bench[Live render timings, variant cache stats, RSS/fd (R8 proof)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(export)
+_arguments "${_arguments_options[@]}" : \
+'--pixel=[]:PIXEL:_default' \
+'--placement=[]:PLACEMENT:_default' \
+'--bg=[]:BG:_default' \
+'--gutter=[]:GUTTER:_default' \
+'-o+[]:OUT:_files' \
+'--out=[]:OUT:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+':size:_default' \
+&& ret=0
+;;
+(optimize)
+_arguments "${_arguments_options[@]}" : \
+'--all[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(daemon)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':shell:(bash elvish fish powershell zsh)' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_pixpapers__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:pixpapers-help-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(remove)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(pixel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(placement)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(bg)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(gutter)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(default)
+_arguments "${_arguments_options[@]}" : \
+":: :_pixpapers__subcmd__help__subcmd__default_commands" \
+"*::: :->default" \
+&& ret=0
+
+    case $state in
+    (default)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:pixpapers-help-default-command-$line[1]:"
+        case $line[1] in
+            (pixel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(placement)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(enable)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(disable)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cycle)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(export)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(optimize)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(daemon)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+}
+
+(( $+functions[_pixpapers_commands] )) ||
+_pixpapers_commands() {
+    local commands; commands=(
+'add:Add wallpaper(s) to the library (original stored optimized)' \
+'list:List the library' \
+'remove:Remove a wallpaper (entry + variants)' \
+'set:Apply a wallpaper now (starts the daemon if needed)' \
+'pixel:Set the pixel look for one wallpaper\: 8|16|32|64|128|normal' \
+'placement:Set placement for one wallpaper\: fit|cover-gutter|cover-crop|stretch' \
+'bg:Set border/gutter color (#rrggbb) for one wallpaper' \
+'gutter:Set gutter width in px (cover-gutter) for one wallpaper' \
+'default:Change defaults for new wallpapers / unset entries' \
+'enable:Force pixelation on for everything (default)' \
+'disable:Turn pixelation off (originals only, placement unchanged)' \
+'cycle:Rotate to the next wallpaper (by N, default 1)' \
+'status:Daemon status' \
+'export:Offline render to a PNG (no daemon needed)\: e.g. 1920x1080' \
+'optimize:Re-run original optimization over the library' \
+'daemon:Run the wallpaper daemon (foreground)' \
+'stop:Ask a running daemon to stop' \
+'completions:Emit a shell completion script' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'pixpapers commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__add_commands] )) ||
+_pixpapers__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers add commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__bg_commands] )) ||
+_pixpapers__subcmd__bg_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers bg commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__completions_commands] )) ||
+_pixpapers__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers completions commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__cycle_commands] )) ||
+_pixpapers__subcmd__cycle_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers cycle commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__daemon_commands] )) ||
+_pixpapers__subcmd__daemon_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers daemon commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__default_commands] )) ||
+_pixpapers__subcmd__default_commands() {
+    local commands; commands=(
+'pixel:' \
+'placement:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'pixpapers default commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__default__subcmd__help_commands] )) ||
+_pixpapers__subcmd__default__subcmd__help_commands() {
+    local commands; commands=(
+'pixel:' \
+'placement:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'pixpapers default help commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__default__subcmd__help__subcmd__help_commands] )) ||
+_pixpapers__subcmd__default__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers default help help commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__default__subcmd__help__subcmd__pixel_commands] )) ||
+_pixpapers__subcmd__default__subcmd__help__subcmd__pixel_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers default help pixel commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__default__subcmd__help__subcmd__placement_commands] )) ||
+_pixpapers__subcmd__default__subcmd__help__subcmd__placement_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers default help placement commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__default__subcmd__pixel_commands] )) ||
+_pixpapers__subcmd__default__subcmd__pixel_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers default pixel commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__default__subcmd__placement_commands] )) ||
+_pixpapers__subcmd__default__subcmd__placement_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers default placement commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__disable_commands] )) ||
+_pixpapers__subcmd__disable_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers disable commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__enable_commands] )) ||
+_pixpapers__subcmd__enable_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers enable commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__export_commands] )) ||
+_pixpapers__subcmd__export_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers export commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__gutter_commands] )) ||
+_pixpapers__subcmd__gutter_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers gutter commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help_commands] )) ||
+_pixpapers__subcmd__help_commands() {
+    local commands; commands=(
+'add:Add wallpaper(s) to the library (original stored optimized)' \
+'list:List the library' \
+'remove:Remove a wallpaper (entry + variants)' \
+'set:Apply a wallpaper now (starts the daemon if needed)' \
+'pixel:Set the pixel look for one wallpaper\: 8|16|32|64|128|normal' \
+'placement:Set placement for one wallpaper\: fit|cover-gutter|cover-crop|stretch' \
+'bg:Set border/gutter color (#rrggbb) for one wallpaper' \
+'gutter:Set gutter width in px (cover-gutter) for one wallpaper' \
+'default:Change defaults for new wallpapers / unset entries' \
+'enable:Force pixelation on for everything (default)' \
+'disable:Turn pixelation off (originals only, placement unchanged)' \
+'cycle:Rotate to the next wallpaper (by N, default 1)' \
+'status:Daemon status' \
+'export:Offline render to a PNG (no daemon needed)\: e.g. 1920x1080' \
+'optimize:Re-run original optimization over the library' \
+'daemon:Run the wallpaper daemon (foreground)' \
+'stop:Ask a running daemon to stop' \
+'completions:Emit a shell completion script' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'pixpapers help commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__add_commands] )) ||
+_pixpapers__subcmd__help__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help add commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__bg_commands] )) ||
+_pixpapers__subcmd__help__subcmd__bg_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help bg commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__completions_commands] )) ||
+_pixpapers__subcmd__help__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help completions commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__cycle_commands] )) ||
+_pixpapers__subcmd__help__subcmd__cycle_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help cycle commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__daemon_commands] )) ||
+_pixpapers__subcmd__help__subcmd__daemon_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help daemon commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__default_commands] )) ||
+_pixpapers__subcmd__help__subcmd__default_commands() {
+    local commands; commands=(
+'pixel:' \
+'placement:' \
+    )
+    _describe -t commands 'pixpapers help default commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__default__subcmd__pixel_commands] )) ||
+_pixpapers__subcmd__help__subcmd__default__subcmd__pixel_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help default pixel commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__default__subcmd__placement_commands] )) ||
+_pixpapers__subcmd__help__subcmd__default__subcmd__placement_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help default placement commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__disable_commands] )) ||
+_pixpapers__subcmd__help__subcmd__disable_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help disable commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__enable_commands] )) ||
+_pixpapers__subcmd__help__subcmd__enable_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help enable commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__export_commands] )) ||
+_pixpapers__subcmd__help__subcmd__export_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help export commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__gutter_commands] )) ||
+_pixpapers__subcmd__help__subcmd__gutter_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help gutter commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__help_commands] )) ||
+_pixpapers__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help help commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__list_commands] )) ||
+_pixpapers__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help list commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__optimize_commands] )) ||
+_pixpapers__subcmd__help__subcmd__optimize_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help optimize commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__pixel_commands] )) ||
+_pixpapers__subcmd__help__subcmd__pixel_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help pixel commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__placement_commands] )) ||
+_pixpapers__subcmd__help__subcmd__placement_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help placement commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__remove_commands] )) ||
+_pixpapers__subcmd__help__subcmd__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help remove commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__set_commands] )) ||
+_pixpapers__subcmd__help__subcmd__set_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help set commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__status_commands] )) ||
+_pixpapers__subcmd__help__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help status commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__help__subcmd__stop_commands] )) ||
+_pixpapers__subcmd__help__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers help stop commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__list_commands] )) ||
+_pixpapers__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers list commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__optimize_commands] )) ||
+_pixpapers__subcmd__optimize_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers optimize commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__pixel_commands] )) ||
+_pixpapers__subcmd__pixel_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers pixel commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__placement_commands] )) ||
+_pixpapers__subcmd__placement_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers placement commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__remove_commands] )) ||
+_pixpapers__subcmd__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers remove commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__set_commands] )) ||
+_pixpapers__subcmd__set_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers set commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__status_commands] )) ||
+_pixpapers__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers status commands' commands "$@"
+}
+(( $+functions[_pixpapers__subcmd__stop_commands] )) ||
+_pixpapers__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'pixpapers stop commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_pixpapers" ]; then
+    _pixpapers "$@"
+else
+    compdef _pixpapers pixpapers
+fi

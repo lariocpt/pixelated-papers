@@ -1,0 +1,2 @@
+[toolchain]
+channel = "stable"   # tested: 1.97.1 — CI and box both resolve to current stable

@@ -1,0 +1,47 @@
+name: Bug report
+description: Something misbehaves — include the compositor truth
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Please include the daemon's own numbers — they usually contain the
+        answer.
+  - type: input
+    id: compositor
+    attributes:
+      label: Compositor + version
+      placeholder: niri 26.04 (8ed0da4)
+    validations: { required: true }
+  - type: input
+    id: outputs
+    attributes:
+      label: Output mode + scale
+      placeholder: 3840x2160@60, niri scale 1.5
+      description: `niri msg outputs` / `wlr-randr` line
+    validations: { required: true }
+  - type: textarea
+    id: status
+    attributes:
+      label: pixpapers status output
+      description: '`pixpapers status` and `pixpapers status --bench --json`'
+      render: shell
+    validations: { required: true }
+  - type: textarea
+    id: layers
+    attributes:
+      label: Layer info
+      description: '`niri msg layers` / `swaymsg -t get_layers` — shows
+        whether another wallpaper daemon owns Background'
+      render: shell
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened vs expected
+    validations: { required: true }
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduce
+      description: exact command sequence; mention if a monitor was
+        unplugged or niri reloaded between steps

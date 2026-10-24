@@ -58,12 +58,13 @@ Changing a default re-applies to any *unset* current wallpaper immediately.
 
 ## Daemon (foreground)
 
+| Command | Meaning |
+|---|---|
+| `daemon` | Run the daemon in the foreground. You rarely type this: `set`/`cycle`/knobs spawn it detached. Foreground use is for logs/debug (`PIXPAPERS_LOG=debug`). |
+
 ```
 pixpapers daemon
 ```
-
-You rarely type this: `set`/`cycle`/knobs spawn it detached. Foreground use
-is for logs/debug (`PIXPAPERS_LOG=debug`).
 
 ## Exit codes
 

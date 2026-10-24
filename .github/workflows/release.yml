@@ -1,0 +1,35 @@
+name: release
+# Hand-rolled dist (step-7 decision): tag v* -> release binary +
+# SHA256SUMS + GitHub release draft. No cargo-dist (one maintainer).
+on:
+  push:
+    tags: [v*]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p pixpapers
+      - name: package
+        run: |
+          set -eu
+          TAG=${GITHUB_REF_NAME}
+          STAGE=pixpapers-$TAG-x86_64-linux
+          mkdir -p "$STAGE"
+          cp target/release/pixpapers "$STAGE/"
+          cp README.md LICENSE-MIT LICENSE-APACHE "$STAGE/"
+          cp docs/man/pixpapers.1 "$STAGE/"
+          cp -r contrib/completions "$STAGE/"
+          cp contrib/pixpapers.service "$STAGE/"
+          tar -C . -czf "pixpapers-$TAG-x86_64-linux.tar.gz" "$STAGE"
+          sha256sum "pixpapers-$TAG-x86_64-linux.tar.gz" > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            pixpapers-*-x86_64-linux.tar.gz
+            SHA256SUMS
