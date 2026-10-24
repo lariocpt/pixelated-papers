@@ -19,6 +19,14 @@ use pixcore::{Config, Paths};
 use crate::ipc::{self, OutputStatus, Request, Response, StatusReport};
 use wayland::Daemon;
 
+/// SIGTERM/SIGINT flip this; the loop checks it every tick and tears down
+/// cleanly. Raw handler: nothing else in the signal path can hang.
+static SHUTDOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+unsafe extern "C" fn handle_shutdown(_sig: libc::c_int) {
+    SHUTDOWN.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
 pub fn run_foreground(paths: Paths) -> Result<()> {
     env_logger::Builder::from_env(
         env_logger::Env::default().filter_or("PIXPAPERS_LOG", "info"),
@@ -50,12 +58,21 @@ pub fn run_foreground(paths: Paths) -> Result<()> {
         .context("write pidfile")?;
 
     // ── signals ───────────────────────────────────────────────────────
-    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-    for sig in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
-        signal_hook::flag::register(sig, running.clone())
-            .context("register signal handler")?;
+    // Raw sigaction(2): the handler is a single async-signal-safe atomic
+    // store, and it *provably runs* on this machine — signal-hook's
+    // flag::register installed handlers that silently never fired here
+    // (SIGTERM-ignored daemon; see VERIFICATION.md V17).
+    for sig in [libc::SIGTERM, libc::SIGINT] {
+        unsafe {
+            let mut sa: libc::sigaction = std::mem::zeroed();
+            let handler: unsafe extern "C" fn(libc::c_int) = handle_shutdown;
+            sa.sa_sigaction = handler as usize;
+            sa.sa_flags = 0; // empty mask; poll returns EINTR → loop re-checks
+            if libc::sigaction(sig, &sa, std::ptr::null_mut()) != 0 {
+                anyhow::bail!("sigaction({sig}) failed: {}", std::io::Error::last_os_error());
+            }
+        }
     }
-    let running_fd_check = running.clone();
 
     log::info!("pixpapers {} daemon up (pid {}), socket {}", env!("CARGO_PKG_VERSION"), std::process::id(), sock.display());
 
@@ -65,7 +82,7 @@ pub fn run_foreground(paths: Paths) -> Result<()> {
     let wayland_fd = conn.backend().poll_fd().as_raw_fd();
     let sock_fd = listener.as_raw_fd();
 
-    while daemon.running && running.load(std::sync::atomic::Ordering::SeqCst) {
+    while daemon.running && SHUTDOWN.load(std::sync::atomic::Ordering::SeqCst) {
         if let Err(e) = conn.flush() {
             // EPIPE here means the compositor is gone (session end / niri
             // restart): clean teardown, then exit 43 (see TROUBLESHOOTING).
@@ -109,7 +126,7 @@ pub fn run_foreground(paths: Paths) -> Result<()> {
             handle_client(&listener, &mut daemon, &conn);
         }
 
-        if !running_fd_check.load(std::sync::atomic::Ordering::SeqCst) {
+        if !SHUTDOWN.load(std::sync::atomic::Ordering::SeqCst) {
             log::info!("signal received; shutting down");
             daemon.running = false;
         }
@@ -154,8 +171,14 @@ fn handle_client(listener: &UnixListener, daemon: &mut Daemon, conn: &Connection
     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     let mut reader = BufReader::new(&stream);
     let mut line = String::new();
-    if reader.read_line(&mut line).unwrap_or(0) == 0 {
-        return;
+    match reader.read_line(&mut line) {
+        Ok(0) | Err(_) => {
+            // EOF or timeout with no bytes: answer rather than close silently,
+            // so a client always gets a reply (never waits out its timeout).
+            let _ = reply(&stream, &Response::err("empty request"));
+            return;
+        }
+        Ok(_) => {}
     }
     let req: Request = match serde_json::from_str(line.trim()) {
         Ok(r) => r,

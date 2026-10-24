@@ -12,6 +12,7 @@ use wayland_client::protocol::wl_buffer::{self, WlBuffer};
 use wayland_client::protocol::wl_compositor::WlCompositor;
 use wayland_client::protocol::wl_output::{self, WlOutput};
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
+use wayland_client::protocol::wl_region::WlRegion;
 use wayland_client::protocol::wl_shm::{self, WlShm};
 use wayland_client::protocol::wl_shm_pool::WlShmPool;
 use wayland_client::protocol::wl_surface::WlSurface;
@@ -190,6 +191,10 @@ impl Daemon {
             layer.set_size(0, 0);
             layer.set_exclusive_zone(-1); // ignore panels' zones: true wallpaper
             layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            // Belt for lax compositors: empty input region ⇒ clicks always
+            // pass through (the gesso pattern; protocol-wise redundant).
+            let region = comp.create_region(&qh, ());
+            surface.set_input_region(Some(&region));
             surface.commit();
             out.surface = Some(surface);
             out.layer = Some(layer);
@@ -514,6 +519,7 @@ impl Dispatch<WlBuffer, (usize, usize)> for Daemon {
 }
 
 wayland_client::delegate_noop!(Daemon: ignore WlCompositor);
+wayland_client::delegate_noop!(Daemon: ignore WlRegion);
 wayland_client::delegate_noop!(Daemon: ignore WlShm);
 wayland_client::delegate_noop!(Daemon: ignore WlShmPool);
 wayland_client::delegate_noop!(Daemon: ignore WlSurface);
