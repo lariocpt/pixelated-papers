@@ -7,10 +7,10 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
-use pixcore::{Config, Paths, Placement, Pixel, RgbCss, Settings};
+use pixcore::{Config, Paths, Pixel, Placement, RgbCss, Settings};
 
-use crate::{commands, daemon, status};
 use crate::ipc::{self, Request};
+use crate::{commands, daemon, status};
 
 #[derive(Parser)]
 #[command(name = "pixpapers", version, about, long_about = None)]
@@ -140,7 +140,9 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
         Cmd::Default { what } => {
             let mut cfg = cfg.clone();
             match what {
-                DefaultWhat::Pixel { pixel } => commands::set_default_pixel(paths, &mut cfg, pixel)?,
+                DefaultWhat::Pixel { pixel } => {
+                    commands::set_default_pixel(paths, &mut cfg, pixel)?
+                }
                 DefaultWhat::Placement { placement } => {
                     commands::set_default_placement(paths, &mut cfg, placement)?
                 }
@@ -155,7 +157,12 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
         Cmd::Cycle { by } => {
             let entry = commands::cycle_current(paths, by.unwrap_or(1))?;
             apply_now(paths);
-            println!("cycle → {} · {} ({})", entry.id, entry.title, state_line(paths));
+            println!(
+                "cycle → {} · {} ({})",
+                entry.id,
+                entry.title,
+                state_line(paths)
+            );
         }
         Cmd::Status { json, bench } => {
             if bench {
@@ -164,9 +171,22 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
                 status::status(paths, cfg, json)
             }
         }
-        Cmd::Export { id, size, pixel, placement, bg, gutter, out } => {
+        Cmd::Export {
+            id,
+            size,
+            pixel,
+            placement,
+            bg,
+            gutter,
+            out,
+        } => {
             let (w, h) = parse_size(&size)?;
-            let overrides = Settings { pixel, placement, bg_color: bg, gutter_px: gutter };
+            let overrides = Settings {
+                pixel,
+                placement,
+                bg_color: bg,
+                gutter_px: gutter,
+            };
             commands::export(paths, cfg, &id, &overrides, (w, h), out.as_deref())?;
         }
         Cmd::Optimize { all } => {
@@ -192,20 +212,32 @@ fn parse_size(s: &str) -> Result<(u32, u32)> {
         .split_once('x')
         .ok_or_else(|| anyhow::anyhow!("size must be <W>x<H>, e.g. 1920x1080"))?;
     Ok((
-        w.trim().parse().map_err(|_| anyhow::anyhow!("bad width in {s:?}"))?,
-        h.trim().parse().map_err(|_| anyhow::anyhow!("bad height in {s:?}"))?,
+        w.trim()
+            .parse()
+            .map_err(|_| anyhow::anyhow!("bad width in {s:?}"))?,
+        h.trim()
+            .parse()
+            .map_err(|_| anyhow::anyhow!("bad height in {s:?}"))?,
     ))
 }
 
 /// Push an Apply to a live daemon (no spawn — knob edits shouldn't wake it).
 fn notify_daemon(paths: &Paths) {
-    let _ = ipc::roundtrip(&paths.socket_file(), &Request::Apply, std::time::Duration::from_millis(900));
+    let _ = ipc::roundtrip(
+        &paths.socket_file(),
+        &Request::Apply,
+        std::time::Duration::from_millis(900),
+    );
 }
 
 /// Apply now, auto-spawning the daemon when needed.
 fn apply_now(paths: &Paths) {
     if daemon::spawn::ensure_running(paths) {
-        let _ = ipc::roundtrip(&paths.socket_file(), &Request::Apply, std::time::Duration::from_millis(2500));
+        let _ = ipc::roundtrip(
+            &paths.socket_file(),
+            &Request::Apply,
+            std::time::Duration::from_millis(2500),
+        );
     }
 }
 
@@ -218,5 +250,10 @@ fn state_line(paths: &Paths) -> &'static str {
 }
 
 fn changed_note(was_current: bool) -> String {
-    if was_current { "" } else { " (not current — will apply on set)" }.to_string()
+    if was_current {
+        ""
+    } else {
+        " (not current — will apply on set)"
+    }
+    .to_string()
 }

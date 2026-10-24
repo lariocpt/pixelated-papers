@@ -6,10 +6,7 @@ use std::path::PathBuf;
 #[derive(Debug, thiserror::Error)]
 pub enum PixError {
     #[error("io error for {path}: {source}")]
-    Io {
-        path: PathBuf,
-        source: io::Error,
-    },
+    Io { path: PathBuf, source: io::Error },
 
     #[error("could not decode image {path}: {reason}")]
     Decode { path: PathBuf, reason: String },
@@ -35,7 +32,10 @@ pub enum PixError {
 
 impl PixError {
     pub fn io(path: impl Into<PathBuf>, source: io::Error) -> Self {
-        Self::Io { path: path.into(), source }
+        Self::Io {
+            path: path.into(),
+            source,
+        }
     }
     pub fn other(msg: impl Into<String>) -> Self {
         Self::Other(msg.into())

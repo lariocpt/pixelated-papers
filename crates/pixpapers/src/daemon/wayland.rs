@@ -11,15 +11,17 @@ use memmap2::MmapMut;
 use wayland_client::protocol::wl_buffer::{self, WlBuffer};
 use wayland_client::protocol::wl_compositor::WlCompositor;
 use wayland_client::protocol::wl_output::{self, WlOutput};
-use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_region::WlRegion;
+use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_shm::{self, WlShm};
 use wayland_client::protocol::wl_shm_pool::WlShmPool;
 use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
-    zwlr_layer_surface_v1::{Anchor, Event as LayerEvent, KeyboardInteractivity, ZwlrLayerSurfaceV1},
+    zwlr_layer_surface_v1::{
+        Anchor, Event as LayerEvent, KeyboardInteractivity, ZwlrLayerSurfaceV1,
+    },
 };
 
 use pixcore::{Config, Paths};
@@ -117,7 +119,11 @@ impl Bench {
         Self::push(&mut self.switch_ms, ms, 100);
     }
     pub fn record_render(&mut self, ms: u64, cache_hit: bool) {
-        if cache_hit { self.hits += 1 } else { self.misses += 1 }
+        if cache_hit {
+            self.hits += 1
+        } else {
+            self.misses += 1
+        }
         Self::push(&mut self.render_ms, ms, 200);
     }
 }
@@ -167,9 +173,11 @@ impl Daemon {
         if !self.globals_ready() {
             return;
         }
-        let (Some(comp), Some(lshell), Some(qh)) =
-            (self.compositor.clone(), self.layer_shell.clone(), self.qh.clone())
-        else {
+        let (Some(comp), Some(lshell), Some(qh)) = (
+            self.compositor.clone(),
+            self.layer_shell.clone(),
+            self.qh.clone(),
+        ) else {
             return;
         };
         for out in self.outputs.iter_mut() {
@@ -199,7 +207,11 @@ impl Daemon {
             out.surface = Some(surface);
             out.layer = Some(layer);
             out.configured = false;
-            log::info!("surface created for output {} (reg {})", out.name, out.reg_name);
+            log::info!(
+                "surface created for output {} (reg {})",
+                out.name,
+                out.reg_name
+            );
         }
     }
 
@@ -220,7 +232,9 @@ impl Daemon {
             log::debug!("no current entry; skipping render");
             return;
         };
-        let Some(out) = self.outputs.iter_mut().find(|o| o.id == id) else { return };
+        let Some(out) = self.outputs.iter_mut().find(|o| o.id == id) else {
+            return;
+        };
         if !out.configured || out.bw == 0 || out.bh == 0 {
             return;
         }
@@ -254,7 +268,10 @@ impl Daemon {
         let words = mmap_to_words(mmap);
         let t0 = std::time::Instant::now();
         let rendered = render::render_into(&self.paths, &cfg, &entry, (out.bw, out.bh), words);
-        self.bench.record_render(t0.elapsed().as_millis() as u64, rendered.as_ref().map(|r| r.1).unwrap_or(false));
+        self.bench.record_render(
+            t0.elapsed().as_millis() as u64,
+            rendered.as_ref().map(|r| r.1).unwrap_or(false),
+        );
         match rendered {
             Ok((label, hit)) => {
                 out.label = Some(label);
@@ -273,7 +290,9 @@ impl Daemon {
                 return;
             }
         }
-        let Some(buf) = out.buffers[slot].buffer.clone() else { return };
+        let Some(buf) = out.buffers[slot].buffer.clone() else {
+            return;
+        };
         surface.set_buffer_scale(out.scale.max(1) as i32);
         surface.attach(Some(&buf), 0, 0);
         surface.damage_buffer(0, 0, out.bw as i32, out.bh as i32);
@@ -349,50 +368,48 @@ impl Dispatch<WlRegistry, ()> for Daemon {
         qh: &QueueHandle<Self>,
     ) {
         match event {
-            wl_registry::Event::Global { name, interface, version } => {
-                match interface.as_str() {
-                    "wl_compositor" => {
-                        state.compositor =
-                            Some(registry.bind::<WlCompositor, _, _>(name, version.min(4), qh, ()))
-                    }
-                    "wl_shm" => {
-                        state.shm = Some(registry.bind::<WlShm, _, _>(name, version.min(1), qh, ()))
-                    }
-                    "zwlr_layer_shell_v1" => {
-                        state.layer_shell = Some(registry.bind::<ZwlrLayerShellV1, _, _>(
-                            name,
-                            version.min(4),
-                            qh,
-                            (),
-                        ));
-                        log::info!("layer-shell v{version} bound");
-                    }
-                    "wl_output" => {
-                        let id = state.next_id;
-                        let out = registry.bind::<WlOutput, _, _>(name, version.min(4), qh, id);
-                        state.outputs.push(Out {
-                            id,
-                            reg_name: name,
-                            name: format!("output-{name}"),
-                            output: out,
-                            scale: 1,
-                            surface: None,
-                            layer: None,
-                            cfg_w: 0,
-                            cfg_h: 0,
-                            configured: false,
-                            bw: 0,
-                            bh: 0,
-                            buffers: Default::default(),
-                            dirty: false,
-                            label: None,
-                        });
-                        state.next_id += 1;
-                        state.ensure_surfaces();
-                    }
-                    _ => {}
+            wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } => match interface.as_str() {
+                "wl_compositor" => {
+                    state.compositor =
+                        Some(registry.bind::<WlCompositor, _, _>(name, version.min(4), qh, ()))
                 }
-            }
+                "wl_shm" => {
+                    state.shm = Some(registry.bind::<WlShm, _, _>(name, version.min(1), qh, ()))
+                }
+                "zwlr_layer_shell_v1" => {
+                    state.layer_shell =
+                        Some(registry.bind::<ZwlrLayerShellV1, _, _>(name, version.min(4), qh, ()));
+                    log::info!("layer-shell v{version} bound");
+                }
+                "wl_output" => {
+                    let id = state.next_id;
+                    let out = registry.bind::<WlOutput, _, _>(name, version.min(4), qh, id);
+                    state.outputs.push(Out {
+                        id,
+                        reg_name: name,
+                        name: format!("output-{name}"),
+                        output: out,
+                        scale: 1,
+                        surface: None,
+                        layer: None,
+                        cfg_w: 0,
+                        cfg_h: 0,
+                        configured: false,
+                        bw: 0,
+                        bh: 0,
+                        buffers: Default::default(),
+                        dirty: false,
+                        label: None,
+                    });
+                    state.next_id += 1;
+                    state.ensure_surfaces();
+                }
+                _ => {}
+            },
             wl_registry::Event::GlobalRemove { name } => {
                 if let Some(pos) = state.outputs.iter().position(|o| o.reg_name == name) {
                     let out = state.outputs.remove(pos); // Drop destroys surface
@@ -413,7 +430,9 @@ impl Dispatch<WlOutput, usize> for Daemon {
         conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        let Some(out) = state.outputs.iter_mut().find(|o| o.id == *id) else { return };
+        let Some(out) = state.outputs.iter_mut().find(|o| o.id == *id) else {
+            return;
+        };
         match event {
             wl_output::Event::Scale { factor } => {
                 let new = factor.max(1) as u32;
@@ -453,9 +472,15 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for Daemon {
         conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        let Some(out) = state.outputs.iter_mut().find(|o| o.id == *id) else { return };
+        let Some(out) = state.outputs.iter_mut().find(|o| o.id == *id) else {
+            return;
+        };
         match event {
-            LayerEvent::Configure { serial, width, height } => {
+            LayerEvent::Configure {
+                serial,
+                width,
+                height,
+            } => {
                 if let Some(layer) = &out.layer {
                     layer.ack_configure(serial);
                 }

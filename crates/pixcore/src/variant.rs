@@ -6,6 +6,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use crate::PIPELINE_VERSION;
 use crate::error::{PixError, Result};
 use crate::optimize;
 use crate::paths::Paths;
@@ -13,7 +14,6 @@ use crate::pipeline;
 use crate::placement::Placement;
 use crate::preset::Pixel;
 use crate::render::ResolvedSettings;
-use crate::PIPELINE_VERSION;
 
 /// Cache key for one rendered variant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -28,7 +28,11 @@ pub struct VariantKey<'a> {
 /// `library/<id>/variants/v<V>[-pal]-<pixel>-<placement>[-g<g>]-<W>x<H>.png`
 pub fn variant_path(paths: &Paths, id: &str, s: &ResolvedSettings, out: (u32, u32)) -> PathBuf {
     let pal = if s.palette { "-pal" } else { "" };
-    let g = if s.placement == Placement::CoverGutter { format!("-g{}", s.gutter_px) } else { String::new() };
+    let g = if s.placement == Placement::CoverGutter {
+        format!("-g{}", s.gutter_px)
+    } else {
+        String::new()
+    };
     paths.variants_dir(id).join(format!(
         "v{PIPELINE_VERSION}{pal}-{pixel}-{placement}{g}-{W}x{H}.png",
         pixel = s.pixel,
@@ -61,18 +65,30 @@ pub fn generate(
 }
 
 /// Run the pipeline for one (settings, output size) from the stored original.
-pub fn generate_from_file(orig: &std::path::Path, s: &ResolvedSettings, out: (u32, u32)) -> Result<image::RgbaImage> {
+pub fn generate_from_file(
+    orig: &std::path::Path,
+    s: &ResolvedSettings,
+    out: (u32, u32),
+) -> Result<image::RgbaImage> {
     let bytes = fs::read(orig).map_err(|e| PixError::io(orig, e))?;
     let reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
         .with_guessed_format()
-        .map_err(|e| PixError::Decode { path: orig.to_path_buf(), reason: e.to_string() })?;
-    let img = reader
-        .decode()
-        .map_err(|e| PixError::Decode { path: orig.to_path_buf(), reason: e.to_string() })?;
+        .map_err(|e| PixError::Decode {
+            path: orig.to_path_buf(),
+            reason: e.to_string(),
+        })?;
+    let img = reader.decode().map_err(|e| PixError::Decode {
+        path: orig.to_path_buf(),
+        reason: e.to_string(),
+    })?;
     Ok(generate_from_image(&img.into_rgba8(), s, out))
 }
 
-pub fn generate_from_image(orig: &image::RgbaImage, s: &ResolvedSettings, out: (u32, u32)) -> image::RgbaImage {
+pub fn generate_from_image(
+    orig: &image::RgbaImage,
+    s: &ResolvedSettings,
+    out: (u32, u32),
+) -> image::RgbaImage {
     let v = crate::placement::view((orig.width(), orig.height()), out, s.placement, s.gutter_px);
     if s.pixel.is_identity() {
         // `normal`: the canvas is the dest itself — nearest stretch happens
@@ -174,17 +190,26 @@ pub fn original_path(paths: &Paths, id: &str) -> Result<std::path::PathBuf> {
             return Ok(p);
         }
     }
-    Err(PixError::NotFound(format!("no stored original for entry {id}")))
+    Err(PixError::NotFound(format!(
+        "no stored original for entry {id}"
+    )))
 }
 
 /// Re-run add-time optimization over the whole library.
 pub fn optimize_all(paths: &Paths, cfg: &crate::config::Optimize) -> Vec<(String, String)> {
     let mut notes = Vec::new();
-    let Ok(lib) = crate::manifest::Library::load(paths) else { return notes };
+    let Ok(lib) = crate::manifest::Library::load(paths) else {
+        return notes;
+    };
     for e in &lib.entries {
-        let Ok(orig) = original_path(paths, &e.id) else { continue };
+        let Ok(orig) = original_path(paths, &e.id) else {
+            continue;
+        };
         if let Ok(opt) = optimize::optimize(&orig.clone(), cfg) {
-            notes.push((e.id.clone(), format!("{}×{} {}", opt.width, opt.height, opt.note)));
+            notes.push((
+                e.id.clone(),
+                format!("{}×{} {}", opt.width, opt.height, opt.note),
+            ));
         }
     }
     notes
@@ -204,21 +229,38 @@ mod tests {
 
     #[test]
     fn path_scheme_includes_version_and_mode() {
-        let p = variant_path(&Paths::with_root("/tmp/x".as_ref()), "id1", &settings("16"), (1920, 1080));
+        let p = variant_path(
+            &Paths::with_root("/tmp/x".as_ref()),
+            "id1",
+            &settings("16"),
+            (1920, 1080),
+        );
         let name = p.file_name().unwrap().to_string_lossy().into_owned();
-        assert_eq!(name, format!("v{PIPELINE_VERSION}-pal-16-fit-1920x1080.png"));
+        assert_eq!(
+            name,
+            format!("v{PIPELINE_VERSION}-pal-16-fit-1920x1080.png")
+        );
     }
 
     #[test]
     fn variant_is_tiny() {
         // the R8 smoke budget: a 1080p @ 16 variant is far below 20 KB
         let photo = image::ImageBuffer::from_fn(1920, 1080, |x, y| {
-            image::Rgba([(x as f64 * 0.01).sin() as u8, (y % 251) as u8, ((x * y) % 97) as u8, 255])
+            image::Rgba([
+                (x as f64 * 0.01).sin() as u8,
+                (y % 251) as u8,
+                ((x * y) % 97) as u8,
+                255,
+            ])
         });
         let v = generate_from_image(&photo, &settings("16"), (1920, 1080));
         assert_eq!((v.width(), v.height()), (120, 68)); // ceil(1920/16)×ceil(1080/16)
         let bytes = encode_variant(&v, true);
-        assert!(bytes.len() < 20 * 1024, "variant {} KB > 20 KB budget", bytes.len() / 1024);
+        assert!(
+            bytes.len() < 20 * 1024,
+            "variant {} KB > 20 KB budget",
+            bytes.len() / 1024
+        );
         // decodes back to the same dims
         let back = image::load_from_memory(&bytes).unwrap();
         assert_eq!((back.width(), back.height()), (120, 68));
@@ -235,7 +277,14 @@ mod tests {
         let mut buf = Vec::new();
         {
             let enc = image::codecs::png::PngEncoder::new(&mut buf);
-            image::ImageEncoder::write_image(enc, img.as_raw(), img.width(), img.height(), image::ExtendedColorType::Rgba8).unwrap();
+            image::ImageEncoder::write_image(
+                enc,
+                img.as_raw(),
+                img.width(),
+                img.height(),
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
         }
         std::fs::write(paths.entry_dir(id).join("original.png"), &buf).unwrap();
         let s = settings("16");

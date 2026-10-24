@@ -30,11 +30,13 @@ impl FromStr for RgbCss {
     type Err = PixError;
     fn from_str(s: &str) -> Result<Self> {
         let t = s.trim().to_ascii_lowercase();
-        let hex = t.strip_prefix('#').ok_or_else(|| {
-            PixError::Invalid(format!("color must start with '#' (got {s:?})"))
-        })?;
+        let hex = t
+            .strip_prefix('#')
+            .ok_or_else(|| PixError::Invalid(format!("color must start with '#' (got {s:?})")))?;
         let decode = |h: &str| -> Option<u8> {
-            if h.len() != 2 { return None; }
+            if h.len() != 2 {
+                return None;
+            }
             u8::from_str_radix(h, 16).ok()
         };
         if hex.len() == 3 {
@@ -44,11 +46,9 @@ impl FromStr for RgbCss {
                 return Ok(RgbCss([r, g, b]));
             }
         } else if hex.len() == 6 {
-            if let (Some(r), Some(g), Some(b)) = (
-                decode(&hex[0..2]),
-                decode(&hex[2..4]),
-                decode(&hex[4..6]),
-            ) {
+            if let (Some(r), Some(g), Some(b)) =
+                (decode(&hex[0..2]), decode(&hex[2..4]), decode(&hex[4..6]))
+            {
                 return Ok(RgbCss([r, g, b]));
             }
         }

@@ -34,7 +34,14 @@ pub enum Pixel {
 }
 
 impl Pixel {
-    pub const ALL: [Pixel; 6] = [Pixel::B8, Pixel::B16, Pixel::B32, Pixel::B64, Pixel::B128, Pixel::Normal];
+    pub const ALL: [Pixel; 6] = [
+        Pixel::B8,
+        Pixel::B16,
+        Pixel::B32,
+        Pixel::B64,
+        Pixel::B128,
+        Pixel::Normal,
+    ];
 
     /// Block size in physical pixels (the one real parameter).
     pub fn block_px(self) -> u32 {
@@ -78,7 +85,10 @@ impl FromStr for Pixel {
     fn from_str(s: &str) -> Result<Self> {
         let t = s.trim().to_ascii_lowercase();
         // Accept the era flavor: "8", "8bit", "8-bit", "8b", "normal".
-        let core = t.strip_suffix("bit").or_else(|| t.strip_suffix("b")).unwrap_or(&t);
+        let core = t
+            .strip_suffix("bit")
+            .or_else(|| t.strip_suffix("b"))
+            .unwrap_or(&t);
         let core = core.strip_suffix('-').unwrap_or(core);
         match core.trim() {
             "8" => Ok(Pixel::B8),

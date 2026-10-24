@@ -28,11 +28,9 @@ unsafe extern "C" fn handle_shutdown(_sig: libc::c_int) {
 }
 
 pub fn run_foreground(paths: Paths) -> Result<()> {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().filter_or("PIXPAPERS_LOG", "info"),
-    )
-    .format_timestamp_secs()
-    .init();
+    env_logger::Builder::from_env(env_logger::Env::default().filter_or("PIXPAPERS_LOG", "info"))
+        .format_timestamp_secs()
+        .init();
 
     // ── wayland ───────────────────────────────────────────────────────
     let conn = match Connection::connect_to_env() {
@@ -54,8 +52,7 @@ pub fn run_foreground(paths: Paths) -> Result<()> {
     let sock = paths.socket_file();
     prepare_socket(&sock)?;
     let listener = UnixListener::bind(&sock).with_context(|| format!("bind {}", sock.display()))?;
-    std::fs::write(paths.pid_file(), std::process::id().to_string())
-        .context("write pidfile")?;
+    std::fs::write(paths.pid_file(), std::process::id().to_string()).context("write pidfile")?;
 
     // ── signals ───────────────────────────────────────────────────────
     // Raw sigaction(2): the handler is a single async-signal-safe atomic
@@ -69,12 +66,20 @@ pub fn run_foreground(paths: Paths) -> Result<()> {
             sa.sa_sigaction = handler as usize;
             sa.sa_flags = 0; // empty mask; poll returns EINTR → loop re-checks
             if libc::sigaction(sig, &sa, std::ptr::null_mut()) != 0 {
-                anyhow::bail!("sigaction({sig}) failed: {}", std::io::Error::last_os_error());
+                anyhow::bail!(
+                    "sigaction({sig}) failed: {}",
+                    std::io::Error::last_os_error()
+                );
             }
         }
     }
 
-    log::info!("pixpapers {} daemon up (pid {}), socket {}", env!("CARGO_PKG_VERSION"), std::process::id(), sock.display());
+    log::info!(
+        "pixpapers {} daemon up (pid {}), socket {}",
+        env!("CARGO_PKG_VERSION"),
+        std::process::id(),
+        sock.display()
+    );
 
     // Apply the current wallpaper once surfaces have configured; the
     // configure event itself triggers the first render — nothing else to do.
@@ -100,8 +105,8 @@ pub fn run_foreground(paths: Paths) -> Result<()> {
                 if let Err(e) = g.read() {
                     use wayland_client::backend::WaylandError;
                     match e {
-                        WaylandError::Io(ref io)
-                            if io.kind() == std::io::ErrorKind::WouldBlock => {}
+                        WaylandError::Io(ref io) if io.kind() == std::io::ErrorKind::WouldBlock => {
+                        }
                         _ => {
                             log::error!("read_events: {e}");
                             daemon.compositor_lost = true;
@@ -213,7 +218,9 @@ fn reply(stream: &std::os::unix::net::UnixStream, r: &Response) -> std::io::Resu
 
 fn status_report(daemon: &Daemon) -> StatusReport {
     let cfg = Config::load(&daemon.paths.config_file).unwrap_or_default();
-    let lib = pixcore::Library::load(&daemon.paths).ok().unwrap_or_default();
+    let lib = pixcore::Library::load(&daemon.paths)
+        .ok()
+        .unwrap_or_default();
     let outputs: Vec<OutputStatus> = daemon
         .snapshot()
         .into_iter()
@@ -264,14 +271,24 @@ fn self_rss_kb() -> u64 {
 
 /// Open fd count from /proc/self/fd.
 fn self_fds() -> u32 {
-    std::fs::read_dir("/proc/self/fd").map(|rd| rd.count() as u32).unwrap_or(0)
+    std::fs::read_dir("/proc/self/fd")
+        .map(|rd| rd.count() as u32)
+        .unwrap_or(0)
 }
 
 /// poll(2) on exactly the two loop fds; returns per-fd POLLIN readiness.
 fn poll2(fd_a: RawFd, fd_b: RawFd, timeout: Duration) -> (bool, bool) {
     let mut pfds = [
-        libc::pollfd { fd: fd_a, events: libc::POLLIN, revents: 0 },
-        libc::pollfd { fd: fd_b, events: libc::POLLIN, revents: 0 },
+        libc::pollfd {
+            fd: fd_a,
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: fd_b,
+            events: libc::POLLIN,
+            revents: 0,
+        },
     ];
     let ms = timeout.as_millis().min(i32::MAX as u128) as i32;
     let rc = unsafe { libc::poll(pfds.as_mut_ptr(), 2, ms) };

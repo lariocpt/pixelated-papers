@@ -31,10 +31,18 @@ pub struct Response {
 
 impl Response {
     pub fn ok(data: Option<StatusReport>) -> Self {
-        Response { ok: true, error: None, data }
+        Response {
+            ok: true,
+            error: None,
+            data,
+        }
     }
     pub fn err(msg: impl Into<String>) -> Self {
-        Response { ok: false, error: Some(msg.into()), data: None }
+        Response {
+            ok: false,
+            error: Some(msg.into()),
+            data: None,
+        }
     }
 }
 
@@ -82,7 +90,11 @@ pub struct BenchReport {
 
 /// Send one request and read one reply. Caller maps `io::Error` kinds
 /// (NotFound/ConnectionRefused) to "daemon not running".
-pub fn roundtrip(socket: &std::path::Path, req: &Request, timeout: Duration) -> std::io::Result<Response> {
+pub fn roundtrip(
+    socket: &std::path::Path,
+    req: &Request,
+    timeout: Duration,
+) -> std::io::Result<Response> {
     let stream = UnixStream::connect(socket)?;
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;

@@ -26,9 +26,15 @@ pub fn optimize(src_path: &Path, cfg: &Optimize) -> Result<Optimized> {
     let bytes = fs::read(src_path).map_err(|e| PixError::io(src_path, e))?;
     let img = image::ImageReader::new(std::io::Cursor::new(&bytes))
         .with_guessed_format()
-        .map_err(|e| PixError::Decode { path: src_path.to_path_buf(), reason: e.to_string() })?
+        .map_err(|e| PixError::Decode {
+            path: src_path.to_path_buf(),
+            reason: e.to_string(),
+        })?
         .decode()
-        .map_err(|e| PixError::Decode { path: src_path.to_path_buf(), reason: e.to_string() })?;
+        .map_err(|e| PixError::Decode {
+            path: src_path.to_path_buf(),
+            reason: e.to_string(),
+        })?;
 
     let (w, h) = img.dimensions();
     if w.min(h) < 16 {
@@ -63,8 +69,7 @@ pub fn optimize(src_path: &Path, cfg: &Optimize) -> Result<Optimized> {
     let mut out: Vec<u8> = Vec::new();
     let (ext, note) = if has_alpha || was_png {
         let enc = image::codecs::png::PngEncoder::new(&mut out);
-        enc
-            .write_image(capped.as_raw(), cw, ch, image::ExtendedColorType::Rgba8)
+        enc.write_image(capped.as_raw(), cw, ch, image::ExtendedColorType::Rgba8)
             .map_err(|e| PixError::other(format!("png encode: {e}")))?;
         let why = if has_alpha { "png(alpha)" } else { "png" };
         ("png", why.to_string())
@@ -77,7 +82,13 @@ pub fn optimize(src_path: &Path, cfg: &Optimize) -> Result<Optimized> {
         ("jpg", format!("jpeg q{}", cfg.jpeg_quality))
     };
 
-    Ok(Optimized { bytes: out, ext, width: cw, height: ch, note })
+    Ok(Optimized {
+        bytes: out,
+        ext,
+        width: cw,
+        height: ch,
+        note,
+    })
 }
 
 fn strip_alpha(img: &image::RgbaImage) -> image::RgbImage {
@@ -98,16 +109,32 @@ mod tests {
     use crate::pipeline::testsrc;
 
     fn write_tmp(img: &image::RgbaImage, fmt: ImageFormat) -> tempfile::NamedTempFile {
-        let ext = match fmt { ImageFormat::Png => "png", _ => "jpg" };
-        let f = tempfile::NamedTempFile::new_in(std::env::temp_dir()).unwrap_or_else(|_| tempfile::NamedTempFile::new().unwrap());
+        let ext = match fmt {
+            ImageFormat::Png => "png",
+            _ => "jpg",
+        };
+        let f = tempfile::NamedTempFile::new_in(std::env::temp_dir())
+            .unwrap_or_else(|_| tempfile::NamedTempFile::new().unwrap());
         let mut buf = Vec::new();
         if fmt == ImageFormat::Png {
             let enc = image::codecs::png::PngEncoder::new(&mut buf);
-            enc.write_image(img.as_raw(), img.width(), img.height(), image::ExtendedColorType::Rgba8).unwrap();
+            enc.write_image(
+                img.as_raw(),
+                img.width(),
+                img.height(),
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
         } else {
             let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 90);
             let rgb = strip_alpha(img);
-            enc.write_image(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8).unwrap();
+            enc.write_image(
+                rgb.as_raw(),
+                rgb.width(),
+                rgb.height(),
+                image::ExtendedColorType::Rgb8,
+            )
+            .unwrap();
         }
         std::fs::write(f.path(), &buf).unwrap();
         let _ = ext;
@@ -128,7 +155,14 @@ mod tests {
             image::Rgba([(x % 200) as u8, (y % 100) as u8, 50, 255])
         });
         let f = write_tmp(&big, ImageFormat::Jpeg);
-        let o = optimize(f.path(), &Optimize { max_side: 3840, jpeg_quality: 87 }).unwrap();
+        let o = optimize(
+            f.path(),
+            &Optimize {
+                max_side: 3840,
+                jpeg_quality: 87,
+            },
+        )
+        .unwrap();
         assert_eq!(o.ext, "jpg");
         assert!(o.width.max(o.height) <= 3840);
         assert!(o.width >= 3830); // rounding
@@ -138,7 +172,9 @@ mod tests {
     fn tiny_images_rejected() {
         let img = image::ImageBuffer::from_pixel(8, 8, image::Rgba([0, 0, 0, 255]));
         let f = write_tmp(&img, ImageFormat::Png);
-        let err = optimize(f.path(), &Optimize::default()).unwrap_err().to_string();
+        let err = optimize(f.path(), &Optimize::default())
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("too small"), "{err}");
     }
 }

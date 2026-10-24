@@ -37,7 +37,10 @@ impl ResolvedSettings {
 
     /// R6 (disabled): pixelation off, placement/bg unchanged.
     pub fn unpixelated(self) -> Self {
-        Self { pixel: Pixel::Normal, ..self }
+        Self {
+            pixel: Pixel::Normal,
+            ..self
+        }
     }
 }
 
@@ -87,7 +90,11 @@ fn stretch_into_rgba(src: &RgbaImage, dest: Rect, out: &mut RgbaImage) {
         let sy = (dy * sh / dh) as u32;
         for dx in 0..dw {
             let sx = (dx * sw / dw) as u32;
-            out.put_pixel(dest.x + dx as u32, dest.y + dy as u32, *src.get_pixel(sx, sy));
+            out.put_pixel(
+                dest.x + dx as u32,
+                dest.y + dy as u32,
+                *src.get_pixel(sx, sy),
+            );
         }
     }
 }
@@ -100,8 +107,8 @@ pub fn to_dynamic(img: RgbaImage) -> DynamicImage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::placement::view;
     use crate::pipeline::testsrc;
+    use crate::placement::view;
 
     #[test]
     fn composite_and_composite_into_agree() {
@@ -125,7 +132,12 @@ mod tests {
     #[test]
     fn fit_borders_are_bg_color() {
         let var = testsrc::gradient64();
-        let v = view((1000, 2000), (1920, 1080), crate::placement::Placement::Fit, 0);
+        let v = view(
+            (1000, 2000),
+            (1920, 1080),
+            crate::placement::Placement::Fit,
+            0,
+        );
         let bg: RgbCss = "#ff00aa".parse().unwrap();
         let mut words = vec![0u32; (v.output.0 * v.output.1) as usize];
         composite_into(&var, &v, bg, &mut words);
@@ -143,7 +155,10 @@ mod tests {
         let s = Settings::default();
         let r = ResolvedSettings::resolve(&s, &cfg);
         assert_eq!(r.pixel, Pixel::B16); // R2 default
-        let s2 = Settings { pixel: "8".parse().ok(), ..Default::default() };
+        let s2 = Settings {
+            pixel: "8".parse().ok(),
+            ..Default::default()
+        };
         assert_eq!(ResolvedSettings::resolve(&s2, &cfg).pixel, Pixel::B8); // R5 entry wins
         assert_eq!(r.unpixelated().pixel, Pixel::Normal); // R6
     }

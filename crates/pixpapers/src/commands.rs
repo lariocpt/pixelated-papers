@@ -5,9 +5,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use pixcore::{
-    Config, Entry, Library, Paths, Placement, Pixel, ResolvedSettings, Settings,
-};
+use pixcore::{Config, Entry, Library, Paths, Pixel, Placement, ResolvedSettings, Settings};
 
 /// Exit-code classifier: user errors (bad id, bad value, undecodable file)
 /// exit 1; internal trouble exits 2.
@@ -23,11 +21,7 @@ pub fn is_user_error(e: &anyhow::Error) -> bool {
 /// pixel size becomes `Normal` (placement/bg untouched).
 pub fn resolve_effective(entry: &Entry, cfg: &Config) -> ResolvedSettings {
     let r = ResolvedSettings::resolve(&entry.settings, cfg);
-    if cfg.enabled {
-        r
-    } else {
-        r.unpixelated()
-    }
+    if cfg.enabled { r } else { r.unpixelated() }
 }
 
 pub fn add(paths: &Paths, cfg: &Config, source: &Path, title: Option<String>) -> Result<Entry> {
@@ -88,7 +82,11 @@ pub fn list(paths: &Paths) -> Result<()> {
         "id", "title", "pixel", "placement", "size", "file"
     );
     for e in &lib.entries {
-        let mark = if lib.current.as_deref() == Some(e.id.as_str()) { "*" } else { " " };
+        let mark = if lib.current.as_deref() == Some(e.id.as_str()) {
+            "*"
+        } else {
+            " "
+        };
         let (px, pl) = display_settings(e);
         println!(
             "{mark}{:<9} {:<24.24} {:<7} {:<13} {:>6}×{:<3} {:>7}",
@@ -113,11 +111,7 @@ pub fn remove(paths: &Paths, id: &str) -> Result<()> {
 }
 
 /// Mutate one entry knob and persist. Returns (entry, was_current).
-pub fn edit_entry(
-    paths: &Paths,
-    id: &str,
-    f: impl FnOnce(&mut Settings),
-) -> Result<(Entry, bool)> {
+pub fn edit_entry(paths: &Paths, id: &str, f: impl FnOnce(&mut Settings)) -> Result<(Entry, bool)> {
     let mut lib = Library::load(paths).context("load library")?;
     let idx = lib
         .find_index(id)
@@ -163,7 +157,14 @@ pub fn cycle_current(paths: &Paths, by: i64) -> Result<Entry> {
 pub fn set_enabled(paths: &Paths, cfg: &mut Config, on: bool) -> Result<()> {
     cfg.enabled = on;
     cfg.save(&paths.config_file).context("save config")?;
-    println!("pixelation {}", if on { "enabled" } else { "disabled — originals only (still stretched/placed)" });
+    println!(
+        "pixelation {}",
+        if on {
+            "enabled"
+        } else {
+            "disabled — originals only (still stretched/placed)"
+        }
+    );
     Ok(())
 }
 
@@ -197,7 +198,13 @@ pub fn export(
         .ok_or_else(|| anyhow::anyhow!("no entry matching {id:?} (see `pixpapers list`)"))?;
     // entry settings → overrides → config defaults
     let merged = merge_settings(&entry.settings, overrides);
-    let base = resolve_effective(&Entry { settings: merged.clone(), ..entry.clone() }, cfg);
+    let base = resolve_effective(
+        &Entry {
+            settings: merged.clone(),
+            ..entry.clone()
+        },
+        cfg,
+    );
     let resolved = ResolvedSettings {
         palette: overrides.pixel.map(|_| cfg.palette).unwrap_or(cfg.palette),
         ..base
@@ -209,8 +216,12 @@ pub fn export(
         pixcore::variant::decode_any(&std::fs::read(&variant_path).map_err(anyhow::Error::from)?)
             .map_err(anyhow::Error::from)?;
     // view computed from the ORIGINAL dims; canvas stretches into view.dest
-    let view =
-        pixcore::view((entry.width, entry.height), out, resolved.placement, resolved.gutter_px);
+    let view = pixcore::view(
+        (entry.width, entry.height),
+        out,
+        resolved.placement,
+        resolved.gutter_px,
+    );
     let final_img = pixcore::render::composite(&canvas, &view, resolved.bg_color);
     let dest = dest.map(|p| p.to_path_buf()).unwrap_or_else(|| {
         std::path::PathBuf::from(format!(
@@ -264,7 +275,11 @@ pub fn optimize_all(paths: &Paths, cfg: &Config) -> Result<()> {
 pub fn display_settings(e: &Entry) -> (String, String) {
     let cfg = Config::default();
     let r = ResolvedSettings::resolve(&e.settings, &cfg);
-    let px = e.settings.pixel.map(|p| p.to_string()).unwrap_or_else(|| format!("{}*", r.pixel));
+    let px = e
+        .settings
+        .pixel
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| format!("{}*", r.pixel));
     let pl = e
         .settings
         .placement

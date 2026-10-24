@@ -7,7 +7,7 @@
 //! no wall-clock timing (this is a byte-size fact table, not a benchmark).
 
 use image::{ImageBuffer, Rgba, RgbaImage};
-use pixcore::{Placement, Pixel, ResolvedSettings, RgbCss};
+use pixcore::{Pixel, Placement, ResolvedSettings, RgbCss};
 
 fn photo(w: u32, h: u32) -> RgbaImage {
     let mut img = ImageBuffer::new(w, h);
@@ -46,7 +46,11 @@ fn png_bytes(img: &RgbaImage) -> usize {
     let mut out = Vec::new();
     let enc = image::codecs::png::PngEncoder::new(&mut out);
     let _ = image::ImageEncoder::write_image(
-        enc, img.as_raw(), img.width(), img.height(), image::ExtendedColorType::Rgba8,
+        enc,
+        img.as_raw(),
+        img.width(),
+        img.height(),
+        image::ExtendedColorType::Rgba8,
     );
     out.len()
 }
@@ -72,14 +76,27 @@ fn row(orig: &RgbaImage, orig_png: usize, out: (u32, u32), preset: &str, label: 
     let ratio = orig_png as f64 / bytes as f64;
     println!(
         "| {label} | {preset} | {}×{} | {} | {} | {:.0}× |",
-        canvas.width(), canvas.height(), kb(bytes), kb(orig_png), ratio
+        canvas.width(),
+        canvas.height(),
+        kb(bytes),
+        kb(orig_png),
+        ratio
     );
 }
 
 fn main() {
     println!("# variant sizes (palette PNG) — evidence for docs/PERF.md\n");
-    for (name, w, h) in [("photo", 1920u32, 1080u32), ("photo", 3840u32, 2160u32), ("flat-art", 1920u32, 1080u32), ("flat-art", 3840u32, 2160u32)] {
-        let orig = if name == "photo" { photo(w, h) } else { flat(w, h) };
+    for (name, w, h) in [
+        ("photo", 1920u32, 1080u32),
+        ("photo", 3840u32, 2160u32),
+        ("flat-art", 1920u32, 1080u32),
+        ("flat-art", 3840u32, 2160u32),
+    ] {
+        let orig = if name == "photo" {
+            photo(w, h)
+        } else {
+            flat(w, h)
+        };
         let orig_png = png_bytes(&orig);
         let out = (w, h);
         println!("**{name} {w}×{h}** (original PNG: {})\n", kb(orig_png));

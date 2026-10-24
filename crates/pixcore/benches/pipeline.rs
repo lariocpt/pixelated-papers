@@ -7,12 +7,10 @@
 //! into an output buffer, and the cold-switch core (orig → canvas → buffer).
 //! Synthetic sources are deterministic; generation is setup, never timed.
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use image::{ImageBuffer, Rgba, RgbaImage};
+use pixcore::{Pixel, Placement, ResolvedSettings, RgbCss, pipeline, view};
 use std::hint::black_box;
-use pixcore::{
-    pipeline, view, Placement, Pixel, ResolvedSettings, RgbCss,
-};
 
 /// Deterministic photo-ish source: sine gradients, no hard edges — the case
 /// where median-cut and box-downscale do real work.
@@ -65,9 +63,17 @@ fn median_cut_bench(c: &mut Criterion) {
     let mut g = c.benchmark_group("median_cut_to_256");
     // A 1080p-ish canvas is what median-cut actually runs on.
     let src = photo(640, 360);
-    let canvas = pipeline::downscale_to_variant(&src, &view((640, 360), (1920, 1080), Placement::CoverCrop, 0), 16);
+    let canvas = pipeline::downscale_to_variant(
+        &src,
+        &view((640, 360), (1920, 1080), Placement::CoverCrop, 0),
+        16,
+    );
     let small = photo(1280, 800);
-    let big_canvas = pipeline::downscale_to_variant(&small, &view((1280, 800), (3840, 2160), Placement::CoverCrop, 0), 8);
+    let big_canvas = pipeline::downscale_to_variant(
+        &small,
+        &view((1280, 800), (3840, 2160), Placement::CoverCrop, 0),
+        8,
+    );
     g.bench_function("canvas_1080p", |b| {
         b.iter(|| {
             let pal = pipeline::median_cut(black_box(&canvas), 256);
@@ -86,14 +92,22 @@ fn median_cut_bench(c: &mut Criterion) {
 fn composite_stretch(c: &mut Criterion) {
     let mut g = c.benchmark_group("composite_stretch");
     // Small canvases stretching to big outputs = the nearest-neighbour hot path.
-    for (label, (ow, oh)) in [("1920x1080", (1920u32, 1080u32)), ("3840x2160", (3840u32, 2160u32))] {
+    for (label, (ow, oh)) in [
+        ("1920x1080", (1920u32, 1080u32)),
+        ("3840x2160", (3840u32, 2160u32)),
+    ] {
         // 16px blocks of a 1280x800 source
         let block = 16u32;
         let canvas = ImageBuffer::from_fn(ow / block, oh / block, |x, y| {
             let t = ((x + y) % 32) as u8 * 8;
             Rgba([t, 255 - t, (x as u8) * 3, 255])
         });
-        let v = view((canvas.width(), canvas.height()), (ow, oh), Placement::Fit, 0);
+        let v = view(
+            (canvas.width(), canvas.height()),
+            (ow, oh),
+            Placement::Fit,
+            0,
+        );
         let bg = RgbCss::BLACK;
         let mut buf = vec![0u32; (ow * oh) as usize];
         g.bench_function(label, |b| {
@@ -126,12 +140,23 @@ fn cold_switch(c: &mut Criterion) {
     g.bench_function("photo1280_to_4k@8_pal", |b| {
         b.iter(|| {
             let canvas = pixcore::variant::generate_from_image(black_box(&src), &s4, out4);
-            let v = view((src.width(), src.height()), out4, s4.placement, s4.gutter_px);
+            let v = view(
+                (src.width(), src.height()),
+                out4,
+                s4.placement,
+                s4.gutter_px,
+            );
             pixcore::render::composite_into(&canvas, &v, s4.bg_color, black_box(&mut buf4));
         });
     });
     g.finish();
 }
 
-criterion_group!(benches, downscale_box, median_cut_bench, composite_stretch, cold_switch);
+criterion_group!(
+    benches,
+    downscale_box,
+    median_cut_bench,
+    composite_stretch,
+    cold_switch
+);
 criterion_main!(benches);

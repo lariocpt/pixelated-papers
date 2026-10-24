@@ -94,7 +94,10 @@ pub fn view(src: (u32, u32), out: (u32, u32), p: Placement, gutter_px: u32) -> V
             let dy = (oh - dh) / 2;
             (whole_src, Rect::new(dx, dy, dw, dh))
         }
-        Placement::CoverCrop => (centered_cover_window(sw, sh, ow, oh), Rect::new(0, 0, ow, oh)),
+        Placement::CoverCrop => (
+            centered_cover_window(sw, sh, ow, oh),
+            Rect::new(0, 0, ow, oh),
+        ),
         Placement::CoverGutter => {
             // Content box centered, clamped to ≥1 px so absurd gutters
             // degrade to a stripe instead of vanishing.
@@ -107,7 +110,11 @@ pub fn view(src: (u32, u32), out: (u32, u32), p: Placement, gutter_px: u32) -> V
         }
     };
 
-    View { window, dest, output: out }
+    View {
+        window,
+        dest,
+        output: out,
+    }
 }
 
 /// Largest integer size fitting `sw×sh` into `box_w×box_h` preserving aspect.
@@ -192,7 +199,10 @@ mod tests {
         let vi = v((1000, 1000), (1920, 1080), Placement::CoverGutter, 24);
         assert_eq!(vi.dest, Rect::new(24, 24, 1872, 1032));
         assert_eq!(vi.window.w, 1000); // square src → width stays
-        assert_eq!(vi.window.h, ((1000.0f64 * 1032.0 / 1872.0).floor() as u32).clamp(1, 1000));
+        assert_eq!(
+            vi.window.h,
+            ((1000.0f64 * 1032.0 / 1872.0).floor() as u32).clamp(1, 1000)
+        );
     }
 
     #[test]
@@ -240,6 +250,9 @@ mod tests {
     fn placement_round_trips_serde_kebab() {
         let s = serde_json::to_string(&Placement::CoverGutter).unwrap();
         assert_eq!(s, "\"cover-gutter\"");
-        assert_eq!(serde_json::from_str::<Placement>(&s).unwrap(), Placement::CoverGutter);
+        assert_eq!(
+            serde_json::from_str::<Placement>(&s).unwrap(),
+            Placement::CoverGutter
+        );
     }
 }

@@ -48,7 +48,11 @@ pub fn downscale(src: &RgbaImage, tw: u32, th: u32) -> RgbaImage {
     let mut cur = src.clone();
     // Halve while both dims stay ≥ 2× the target (each pass is a cheap
     // 2×2 box average). One dim may still be larger — the final box handles it.
-    while cur.width() / 2 >= tw && cur.height() / 2 >= th && cur.width() % 2 == 0 && cur.height() % 2 == 0 {
+    while cur.width() / 2 >= tw
+        && cur.height() / 2 >= th
+        && cur.width() % 2 == 0
+        && cur.height() % 2 == 0
+    {
         cur = box_halve(&cur);
     }
     box_to(&cur, tw, th)
@@ -149,7 +153,12 @@ pub fn median_cut(img: &RgbaImage, max_colors: usize) -> Vec<Rgba<u8>> {
                 }
             }
             let n = b.len() as u64;
-            Rgba([(acc[0] / n) as u8, (acc[1] / n) as u8, (acc[2] / n) as u8, 255])
+            Rgba([
+                (acc[0] / n) as u8,
+                (acc[1] / n) as u8,
+                (acc[2] / n) as u8,
+                255,
+            ])
         })
         .collect();
     pal.sort_unstable_by_key(|c| (c.0[0], c.0[1], c.0[2], c.0[3]));
@@ -255,7 +264,12 @@ mod tests {
         let src = image::ImageBuffer::from_fn(512, 512, |x, y| {
             image::Rgba([(x % 250) as u8, (y % 250) as u8, 100, 255])
         });
-        for p in [Placement::Fit, Placement::CoverGutter, Placement::CoverCrop, Placement::Stretch] {
+        for p in [
+            Placement::Fit,
+            Placement::CoverGutter,
+            Placement::CoverCrop,
+            Placement::Stretch,
+        ] {
             let v = view((512, 512), (1920, 1080), p, 24);
             let var = downscale_to_variant(&src, &v, 16);
             assert_eq!(var.width(), v.dest.w.div_ceil(16), "{p}");
@@ -273,7 +287,9 @@ mod tests {
     fn block16_averages_flat_colors_exactly() {
         let mut img = ImageBuffer::from_pixel(64, 64, Rgba([10, 200, 40, 255]));
         for (x, y, p) in img.enumerate_pixels_mut() {
-            if x % 2 == 0 && y % 2 == 0 { *p = Rgba([12, 196, 44, 255]); }
+            if x % 2 == 0 && y % 2 == 0 {
+                *p = Rgba([12, 196, 44, 255]);
+            }
         }
         let down = downscale(&img, 16, 16);
         // 1/4 of pixels are [12,196,44], 3/4 are [10,200,40] ⇒ weighted mean

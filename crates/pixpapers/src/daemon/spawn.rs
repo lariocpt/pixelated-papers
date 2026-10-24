@@ -25,7 +25,11 @@ pub fn ensure_running(paths: &Paths) -> bool {
         Ok(e) => e,
         Err(_) => return false,
     };
-    let log = match OpenOptions::new().create(true).append(true).open(paths.log_file()) {
+    let log = match OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(paths.log_file())
+    {
         Ok(f) => f,
         Err(_) => return false,
     };
@@ -33,7 +37,11 @@ pub fn ensure_running(paths: &Paths) -> bool {
     cmd.arg("daemon")
         .stdin(Stdio::null())
         .stdout(Stdio::from(log.try_clone().unwrap_or_else(|_| {
-            OpenOptions::new().create(true).append(true).open(paths.log_file()).expect("log")
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(paths.log_file())
+                .expect("log")
         })))
         .stderr(Stdio::from(log))
         .process_group(0); // detach into its own session leader group

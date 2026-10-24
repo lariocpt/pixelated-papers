@@ -62,7 +62,10 @@ impl Default for Config {
 
 impl Default for Optimize {
     fn default() -> Self {
-        Self { max_side: 3840, jpeg_quality: 87 }
+        Self {
+            max_side: 3840,
+            jpeg_quality: 87,
+        }
     }
 }
 
@@ -133,7 +136,10 @@ mod tests {
 
         fs::write(&path, "this is = not [valid").unwrap();
         let err = Config::load(&path).unwrap_err().to_string();
-        assert!(err.contains(path.to_str().unwrap()), "error must name the path: {err}");
+        assert!(
+            err.contains(path.to_str().unwrap()),
+            "error must name the path: {err}"
+        );
     }
 
     #[test]

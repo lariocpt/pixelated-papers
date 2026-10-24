@@ -4,13 +4,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::MANIFEST_VERSION;
+use crate::RgbCss;
 use crate::config::write_atomic;
 use crate::error::{PixError, Result};
+use crate::paths::Paths;
 use crate::placement::Placement;
 use crate::preset::Pixel;
-use crate::RgbCss;
-use crate::MANIFEST_VERSION;
-use crate::paths::Paths;
 
 /// Per-wallpaper knobs. `None` means "inherit the config default".
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -55,7 +55,11 @@ pub struct Library {
 
 impl Default for Library {
     fn default() -> Self {
-        Self { version: MANIFEST_VERSION, current: None, entries: Vec::new() }
+        Self {
+            version: MANIFEST_VERSION,
+            current: None,
+            entries: Vec::new(),
+        }
     }
 }
 
@@ -74,7 +78,10 @@ impl Library {
         if lib.version != MANIFEST_VERSION {
             return Err(PixError::Manifest {
                 path,
-                reason: format!("unsupported version {} (expected {})", lib.version, MANIFEST_VERSION),
+                reason: format!(
+                    "unsupported version {} (expected {})",
+                    lib.version, MANIFEST_VERSION
+                ),
             });
         }
         Ok(lib)
@@ -83,8 +90,8 @@ impl Library {
     /// Atomic save (temp + rename) — a crash never corrupts the manifest.
     pub fn save(&self, paths: &Paths) -> Result<()> {
         let path = paths.manifest_file();
-        let mut with_trailing = serde_json::to_string_pretty(self)
-            .map_err(|e| PixError::other(e.to_string()))?;
+        let mut with_trailing =
+            serde_json::to_string_pretty(self).map_err(|e| PixError::other(e.to_string()))?;
         with_trailing.push('\n');
         write_atomic(&path, with_trailing.as_bytes()).map_err(|e| PixError::io(&path, e))
     }
@@ -114,7 +121,9 @@ impl Library {
 
     pub fn remove(&mut self, paths: &Paths, id_or_title: &str) -> Result<Entry> {
         let idx = self.find_index(id_or_title).ok_or_else(|| {
-            PixError::NotFound(format!("no entry matching {id_or_title:?} (see `pixpapers list`)"))
+            PixError::NotFound(format!(
+                "no entry matching {id_or_title:?} (see `pixpapers list`)"
+            ))
         })?;
         let entry = self.entries.remove(idx);
         let dir = paths.entry_dir(&entry.id);
@@ -199,10 +208,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let _paths = paths_in(dir.path());
         let mut lib = Library::default();
-        lib.entries.push(Entry { id: "abcd1234".into(), title: "mountain view".into(), ..
-            Entry { id: "x".into(), title: "y".into(), hash: String::new(), ext: "png".into(),
-                added_unix: 0, width: 0, height: 0, original_bytes: 0,
-                optimize_note: String::new(), settings: Settings::default() } });
+        lib.entries.push(Entry {
+            id: "abcd1234".into(),
+            title: "mountain view".into(),
+            ..Entry {
+                id: "x".into(),
+                title: "y".into(),
+                hash: String::new(),
+                ext: "png".into(),
+                added_unix: 0,
+                width: 0,
+                height: 0,
+                original_bytes: 0,
+                optimize_note: String::new(),
+                settings: Settings::default(),
+            }
+        });
         assert!(lib.find("abcd").is_some()); // id prefix
         assert!(lib.find("mountain").is_some()); // title prefix
         assert!(lib.find("nope").is_none());
@@ -215,13 +236,26 @@ mod tests {
         paths.ensure_dirs().unwrap();
         let mut lib = Library::default();
         let e = Entry {
-            id: "deadbeef".into(), title: "t".into(), hash: "h".into(), ext: "png".into(),
-            added_unix: 0, width: 1, height: 1, original_bytes: 1, optimize_note: String::new(),
+            id: "deadbeef".into(),
+            title: "t".into(),
+            hash: "h".into(),
+            ext: "png".into(),
+            added_unix: 0,
+            width: 1,
+            height: 1,
+            original_bytes: 1,
+            optimize_note: String::new(),
             settings: Settings::default(),
         };
         fs::create_dir_all(paths.entry_dir("deadbeef")).unwrap();
         fs::create_dir_all(paths.variants_dir("deadbeef")).unwrap();
-        fs::write(paths.variants_dir("deadbeef").join("v1-16-fit-1920x1080.png"), b"x").unwrap();
+        fs::write(
+            paths
+                .variants_dir("deadbeef")
+                .join("v1-16-fit-1920x1080.png"),
+            b"x",
+        )
+        .unwrap();
         lib.entries.push(e.clone());
         lib.set_current("deadbeef");
         lib.remove(&paths, "dead").unwrap();
