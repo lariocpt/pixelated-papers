@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pixelated-papers — forced-pixelation wallpapers for wayland</title>
+<meta name="description" content="Every wallpaper gets pixelated: block sizes 8–128px, four placements, originals stored, variants cached at the absolute minimum size. Rust, wlr-layer-shell, niri-first.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23101418'/%3E%3Crect x='2' y='2' width='12' height='12' fill='%23f7b32b'/%3E%3Crect x='18' y='18' width='12' height='12' fill='%233572d8'/%3E%3Crect x='18' y='2' width='12' height='12' fill='%2339c08f'/%3E%3C/svg%3E">
+<meta property="og:title" content="pixelated-papers">
+<meta property="og:description" content="Forced-pixelation wallpapers for niri and other wayland compositors. 6 KB variants, 45 ms switches.">
+<meta property="og:type" content="website">
+<style>
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body,h1,h2,h3,p,figure,dl,dd,pre{margin:0}
+img,svg{max-width:100%;display:block}
+table{border-collapse:collapse}
+:root{
+  --ground:#101418; --panel:#171d23; --panel-2:#1e262e; --line:#2a343e;
+  --ink:#e8eef2; --dim:#9fb0bc; --accent:#f7b32b; --accent-2:#39c08f; --accent-3:#3572d8;
+  --mono:ui-monospace,"JetBrains Mono","Fira Code",Menlo,Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --ground:#f4f1ea; --panel:#fffdf8; --panel-2:#ece7dc; --line:#d8d2c4;
+    --ink:#1c2126; --dim:#5d6b76; --accent:#b4750a; --accent-2:#177a55; --accent-3:#2b5ea8;
+  }
+}
+body{background:var(--ground);color:var(--ink);font-family:var(--sans);line-height:1.55}
+.wrap{max-width:1000px;margin:0 auto;padding:0 20px}
+header{padding:64px 0 40px}
+.logo{font-family:var(--mono);font-size:.95rem;letter-spacing:.08em;color:var(--accent);text-transform:lowercase}
+h1{font-size:clamp(1.9rem,4.5vw,3rem);line-height:1.12;margin:.45em 0 .35em;letter-spacing:-.01em}
+.lede{color:var(--dim);font-size:1.13rem;max-width:56ch}
+.lede b{color:var(--ink)}
+.cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:26px}
+a.btn{font-family:var(--mono);font-size:.9rem;text-decoration:none;padding:10px 18px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+a.btn.hot{background:var(--accent);border-color:var(--accent);color:#101418;font-weight:700}
+@media (prefers-color-scheme: light){ a.btn.hot{color:#fffdf8} }
+a.btn:hover{border-color:var(--accent)}
+.blocks{display:flex;gap:3px;margin:38px 0 8px}
+.blocks i{width:14px;height:14px}
+section{padding:44px 0;border-top:1px solid var(--line)}
+h2{font-size:1.35rem;margin-bottom:14px}
+h2 .hash{color:var(--accent);font-family:var(--mono);margin-right:8px}
+p+p{margin-top:10px}
+p{max-width:70ch}
+pre{background:var(--panel);border:1px solid var(--line);padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:.86rem;line-height:1.7;margin-top:16px}
+code{font-family:var(--mono);font-size:.92em;background:var(--panel-2);padding:1px 5px}
+pre code{background:none;padding:0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-top:18px}
+.card{background:var(--panel);border:1px solid var(--line);padding:16px}
+.card h3{font-size:.98rem;font-family:var(--mono);color:var(--accent-2);margin-bottom:6px}
+.card p{color:var(--dim);font-size:.92rem}
+table{width:100%;margin-top:16px;font-size:.92rem}
+th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);font-family:var(--mono)}
+th{color:var(--dim);font-weight:600}
+td b{color:var(--accent)}
+figure{margin-top:22px}
+figure img{border:1px solid var(--line);width:100%}
+figcaption{color:var(--dim);font-size:.85rem;margin-top:8px;font-family:var(--mono)}
+ul.docs{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;margin-top:14px}
+ul.docs a{color:var(--accent-3);text-decoration:none;font-family:var(--mono);font-size:.9rem}
+ul.docs a:hover{text-decoration:underline}
+.fine{color:var(--dim);font-size:.85rem;margin-top:14px}
+footer{border-top:1px solid var(--line);padding:34px 0 60px;color:var(--dim);font-size:.88rem}
+footer a{color:var(--accent-3)}
+</style>
+</head>
+<body>
+<header class="wrap">
+  <div class="logo">▚▚ pixelated-papers</div>
+  <h1>Every wallpaper.<br>Pixelated. Forced.</h1>
+  <p class="lede">A tiny Rust daemon for <b>niri</b> and other wayland compositors:
+  set a wallpaper and it arrives in literal pixel blocks — <b>8·16·32·64·128</b>.
+  Originals are kept; what gets displayed is a cached render the size of an
+  email attachment.</p>
+  <div class="blocks" aria-hidden="true">
+    <i style="background:var(--accent)"></i><i style="background:var(--accent-3)"></i><i style="background:var(--accent-2)"></i><i style="background:var(--accent)"></i><i style="background:var(--accent-3)"></i><i style="background:var(--accent-2)"></i><i style="background:var(--accent)"></i><i style="background:var(--accent-3)"></i><i style="background:var(--accent-2)"></i><i style="background:var(--accent)"></i><i style="background:var(--accent-3)"></i><i style="background:var(--accent-2)"></i>
+  </div>
+  <div class="cta">
+    <a class="btn hot" href="https://github.com/lariocpt/pixelated-papers">GitHub</a>
+    <a class="btn" href="https://github.com/lariocpt/pixelated-papers/releases">v0.1.0 release</a>
+    <a class="btn" href="CLI.md">CLI reference</a>
+  </div>
+</header>
+
+<section class="wrap">
+  <h2><span class="hash">##</span>Two commands to the look</h2>
+  <pre><code>$ cargo install --path .
+$ pixpapers add ~/Pictures/nebula.png
+$ pixpapers set &lt;id&gt;        # daemon auto-starts — on screen in ~90 ms</code></pre>
+  <p class="fine">niri needs no config stanza. Prefer systemd?
+  <code>contrib/pixpapers.service</code> ships with the logout flap guard
+  (<code>RestartPreventExitStatus=43</code>).</p>
+</section>
+
+<section class="wrap">
+  <h2><span class="hash">##</span>The knobs are per wallpaper</h2>
+  <pre><code>$ pixpapers pixel     &lt;id&gt; 8|16|32|64|128|normal   # block size (default 16)
+$ pixpapers placement &lt;id&gt; fit|cover-gutter|cover-crop|stretch
+$ pixpapers bg        &lt;id&gt; "#1a2b3c"               # borders &amp; gutter
+$ pixpapers export    &lt;id&gt; 3840x2160 --pixel 8 -o /tmp/p.png  # exact preview</code></pre>
+  <figure>
+    <img src="screens/step8/grid-6x4.png" alt="Six pixel presets by four placements on one sunset image" loading="lazy">
+    <figcaption>6 presets × 4 placements — one source image. The export command renders exactly what the daemon draws, so previews never lie.</figcaption>
+  </figure>
+</section>
+
+<section class="wrap">
+  <h2><span class="hash">##</span>Fast, measured — not vibes</h2>
+  <table>
+    <tr><th>what</th><th>measured (niri 26.04 · 4K · scale 1.5)</th></tr>
+    <tr><td>cold set → pixels on screen</td><td><b>91 ms</b></td></tr>
+    <tr><td>hot switch p50 / p95</td><td><b>23 / 45 ms</b></td></tr>
+    <tr><td>variant on disk (1080p photo @ 16)</td><td><b>6.3 KB</b> — 310× smaller than the original</td></tr>
+    <tr><td>idle daemon footprint</td><td><b>4.4 MB · 5 fds</b></td></tr>
+  </table>
+  <p class="fine">Every number is reproducible — <code>cargo bench</code>,
+  <code>test/bench-daemon.sh</code>, <code>pixpapers status --bench</code>.
+  Where a claim washes out (flat-art, <code>normal</code>, steady-state
+  buffers) the docs walk it back explicitly: <a style="color:var(--accent-3)" href="PERF.md">PERF.md</a>
+  and <a style="color:var(--accent-3)" href="VERIFICATION.md">VERIFICATION.md</a>.</p>
+</section>
+
+<section class="wrap">
+  <h2><span class="hash">##</span>How it works</h2>
+  <div class="grid">
+    <div class="card"><h3>cli owns state</h3><p>Atomic config + versioned manifest; the daemon is a pure renderer that re-reads truth on every apply. Kill it — the next command respawns it (54 ms).</p></div>
+    <div class="card"><h3>minimum variants</h3><p>Pixelated look = tiny canvas. The daemon caches palette-PNG renders (kilobytes) per preset/placement/output and stretches them nearest-neighbour onto a layer-shell background surface.</p></div>
+    <div class="card"><h3>forced by design</h3><p>No per-set opt-out you forget: pixelation applies to everything the tool sets. The only exits are <code>normal</code> per wallpaper or <code>disable</code> globally.</p></div>
+    <div class="card"><h3>session-aware</h3><p>Compositor goes away (logout, niri restart) → clean teardown, exit 43, no flap, no stale socket. Supervisors can tell “session ended” from “crashed”.</p></div>
+  </div>
+</section>
+
+<section class="wrap">
+  <h2><span class="hash">##</span>Documentation</h2>
+  <ul class="docs">
+    <li><a href="CLI.md">docs/CLI.md — every command &amp; flag</a></li>
+    <li><a href="COMPOSITORS.md">docs/COMPOSITORS.md — niri depth, conflicts</a></li>
+    <li><a href="SCALING.md">docs/SCALING.md — integer &amp; fractional scale</a></li>
+    <li><a href="PERF.md">docs/PERF.md — measured performance</a></li>
+    <li><a href="TROUBLESHOOTING.md">docs/TROUBLESHOOTING.md — nothing shows / exit 43</a></li>
+    <li><a href="VERIFICATION.md">docs/VERIFICATION.md — tested &amp; untested</a></li>
+    <li><a href="PLAN.md">docs/PLAN.md — design &amp; build log</a></li>
+    <li><a href="https://github.com/lariocpt/pixelated-papers/blob/main/CHANGELOG.md">CHANGELOG</a></li>
+  </ul>
+  <p class="fine">Tested with niri 26.04 on a single 4K output; multi-output and
+  other compositors: layer-shell standard surface, expected-but-untested —
+  honesty over marketing. X11: <code>pixpapers export</code> + any wallpaper
+  setter is the supported path.</p>
+</section>
+
+<footer class="wrap">
+  <p>MIT OR Apache-2.0 · © 2026 pixelated-papers contributors ·
+  <a href="https://github.com/lariocpt/pixelated-papers">github.com/lariocpt/pixelated-papers</a></p>
+</footer>
+</body>
+</html>
