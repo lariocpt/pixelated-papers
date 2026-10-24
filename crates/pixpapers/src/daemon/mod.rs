@@ -67,7 +67,11 @@ pub fn run_foreground(paths: Paths) -> Result<()> {
 
     while daemon.running && running.load(std::sync::atomic::Ordering::SeqCst) {
         if let Err(e) = conn.flush() {
+            // EPIPE here means the compositor is gone (session end / niri
+            // restart): clean teardown, then exit 43 (see TROUBLESHOOTING).
             log::error!("conn.flush: {e}");
+            daemon.compositor_lost = true;
+            daemon.running = false;
         }
         // Drain wayland events: prepare_read → poll → read → dispatch_pending.
         // This is the documented manual-loop pattern; dispatch_pending alone
@@ -83,6 +87,7 @@ pub fn run_foreground(paths: Paths) -> Result<()> {
                             if io.kind() == std::io::ErrorKind::WouldBlock => {}
                         _ => {
                             log::error!("read_events: {e}");
+                            daemon.compositor_lost = true;
                             daemon.running = false;
                         }
                     }
@@ -93,6 +98,7 @@ pub fn run_foreground(paths: Paths) -> Result<()> {
             Ok(n) if n > 0 => log::debug!("dispatched {n} wayland events"),
             Err(wayland_client::DispatchError::Backend(e)) => {
                 log::error!("dispatch backend error: {e}");
+                daemon.compositor_lost = true;
                 daemon.running = false;
             }
             _ => {}
@@ -116,6 +122,11 @@ pub fn run_foreground(paths: Paths) -> Result<()> {
     let _ = std::fs::remove_file(&sock);
     let _ = std::fs::remove_file(paths.pid_file());
     log::info!("bye");
+    // Session gone (niri restart / logout): distinct exit so a supervisor or
+    // the TROUBLESHOOTING guide can tell "killed" from "session ended".
+    if daemon.compositor_lost {
+        std::process::exit(43);
+    }
     Ok(())
 }
 
@@ -156,7 +167,9 @@ fn handle_client(listener: &UnixListener, daemon: &mut Daemon, conn: &Connection
     log::debug!("ipc: {req:?}");
     match req {
         Request::Apply => {
+            let t0 = std::time::Instant::now();
             daemon.render_all(conn);
+            daemon.bench.record_apply(t0.elapsed().as_millis() as u64);
             let _ = reply(&stream, &Response::ok(None));
         }
         Request::Status => {
@@ -197,9 +210,38 @@ fn status_report(daemon: &Daemon) -> StatusReport {
         default_placement: cfg.default_placement.to_string(),
         current: lib.current,
         outputs,
-        variants_on_disk: 0, // cheap-enough scan lives in status.rs for the local view
+        variants_on_disk: 0, // cheap scan done in status.rs against shared FS
         variant_bytes: 0,
+        bench: Some(crate::ipc::BenchReport {
+            applies: daemon.bench.applies,
+            last_switch_ms: daemon.bench.last_switch_ms,
+            switch_median_ms: daemon.bench.switch_median_ms(),
+            switch_max_ms: daemon.bench.switch_max_ms(),
+            render_median_ms: daemon.bench.render_median_ms(),
+            render_max_ms: daemon.bench.render_max_ms(),
+            variant_hits: daemon.bench.hits,
+            variant_misses: daemon.bench.misses,
+            rss_kb: self_rss_kb(),
+            fds: self_fds(),
+        }),
     }
+}
+
+/// VmRSS in kB from /proc/self/status (Linux; 0 elsewhere).
+fn self_rss_kb() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("VmRSS:"))
+                .and_then(|l| l.split_whitespace().nth(1)?.parse().ok())
+        })
+        .unwrap_or(0)
+}
+
+/// Open fd count from /proc/self/fd.
+fn self_fds() -> u32 {
+    std::fs::read_dir("/proc/self/fd").map(|rd| rd.count() as u32).unwrap_or(0)
 }
 
 /// poll(2) on exactly the two loop fds; returns per-fd POLLIN readiness.

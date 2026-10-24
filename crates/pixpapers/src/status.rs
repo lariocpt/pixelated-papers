@@ -18,6 +18,7 @@ pub fn local_report(paths: &Paths, cfg: &Config) -> StatusReport {
         outputs: vec![],
         variants_on_disk,
         variant_bytes,
+        bench: None,
     }
 }
 
@@ -50,17 +51,65 @@ pub fn print_report(r: &StatusReport, json: bool) {
     println!("cache:    {} variant file(s), {:.0} KB", r.variants_on_disk, kb);
 }
 
+/// `status --bench` — the R8 numbers, straight from the daemon's own renders.
+pub fn print_bench(r: &StatusReport, json: bool) {
+    let Some(b) = &r.bench else {
+        println!("bench:    unavailable (start the daemon; these are live-render numbers)");
+        return;
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(b).unwrap());
+        return;
+    }
+    let total = b.variant_hits + b.variant_misses;
+    let hit_pct = if total > 0 { b.variant_hits as f64 * 100.0 / total as f64 } else { 0.0 };
+    println!("bench (daemon self-timed, last {} applies / {} renders):", b.applies, total);
+    println!("  switch:   last {} ms · median {} ms · max {} ms", b.last_switch_ms, b.switch_median_ms, b.switch_max_ms);
+    println!("  render:   median {} ms · max {} ms (per output, composite→buffer)", b.render_median_ms, b.render_max_ms);
+    println!("  variants: {} hits / {} misses ({:.0}% cache), {:.0} KB on disk", b.variant_hits, b.variant_misses, hit_pct, r.variant_bytes as f64 / 1024.0);
+    println!("  footprint: {} KB RSS · {} fds", b.rss_kb, b.fds);
+}
+
 /// Try the daemon, fall back to local.
 pub fn status(paths: &Paths, cfg: &Config, json: bool) {
     match ipc::roundtrip(&paths.socket_file(), &Request::Status, std::time::Duration::from_millis(800)) {
         Ok(resp) if resp.ok && resp.data.is_some() => print_report(resp.data.as_ref().unwrap(), json),
-        _ => {
-            if !json {
-                // no daemon: local view
-            }
-            print_report(&local_report(paths, cfg), json)
-        }
+        _ => print_report(&local_report(paths, cfg), json),
     }
+}
+
+/// `status --bench`: ask the daemon for its self-timed numbers, enrich with a
+/// cheap local variant scan (filesystem is shared truth), and print.
+pub fn status_bench(paths: &Paths, cfg: &Config, json: bool) {
+    let r = match ipc::roundtrip(&paths.socket_file(), &Request::Status, std::time::Duration::from_millis(800)) {
+        Ok(resp) if resp.ok && resp.data.is_some() => {
+            let mut r = resp.data.unwrap();
+            // daemon leaves the cache scan to us (cheap, and it is the truth)
+            let lib = Library::load(paths).ok().unwrap_or_default();
+            let (bytes, count) = scan_variants(paths, &lib);
+            r.variant_bytes = bytes;
+            r.variants_on_disk = count;
+            if !json {
+                print_report(&r, false);
+            }
+            r
+        }
+        _ => {
+            let r = local_report(paths, cfg);
+            if !json {
+                print_report(&r, false);
+            }
+            r
+        }
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&r).unwrap());
+        return;
+    }
+    if r.bench.is_none() {
+        println!("bench:    unavailable — not running under `pixpapers daemon` (no live renders to time)");
+    }
+    print_bench(&r, false);
 }
 
 /// `pixpapers stop` — ask the daemon to quit.
@@ -81,7 +130,7 @@ fn read_pid(paths: &Paths) -> Option<u32> {
     std::fs::read_to_string(paths.pid_file()).ok()?.trim().parse().ok()
 }
 
-fn scan_variants(paths: &Paths, lib: &Library) -> (u64, usize) {
+pub(crate) fn scan_variants(paths: &Paths, lib: &Library) -> (u64, usize) {
     let (mut bytes, mut count) = (0u64, 0usize);
     for e in &lib.entries {
         let dir = paths.variants_dir(&e.id);

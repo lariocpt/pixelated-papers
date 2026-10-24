@@ -51,6 +51,8 @@ pub struct StatusReport {
     pub outputs: Vec<OutputStatus>,
     pub variants_on_disk: usize,
     pub variant_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bench: Option<BenchReport>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -60,6 +62,22 @@ pub struct OutputStatus {
     pub height: u32,
     pub scale: u32,
     pub variant: Option<String>,
+}
+
+/// `status --bench` payload: rolling numbers from the daemon's own render
+/// path (zero sampling cost when idle) + process footprint.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BenchReport {
+    pub applies: u64,
+    pub last_switch_ms: u64,
+    pub switch_median_ms: u64,
+    pub switch_max_ms: u64,
+    pub render_median_ms: u64,
+    pub render_max_ms: u64,
+    pub variant_hits: u64,
+    pub variant_misses: u64,
+    pub rss_kb: u64,
+    pub fds: u32,
 }
 
 /// Send one request and read one reply. Caller maps `io::Error` kinds

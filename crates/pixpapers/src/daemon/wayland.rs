@@ -72,6 +72,55 @@ impl Drop for Out {
     }
 }
 
+/// Rolling latency stats — pure counters around the real render path, no
+/// extra work (`status --bench` surfaces them; nothing samples on idle).
+#[derive(Default)]
+pub struct Bench {
+    pub applies: u64,
+    pub last_switch_ms: u64,
+    pub switch_ms: std::collections::VecDeque<u64>, // last 100 Apply latencies
+    pub render_ms: std::collections::VecDeque<u64>, // last 200 output renders
+    pub hits: u64,
+    pub misses: u64,
+}
+
+impl Bench {
+    fn push(dq: &mut std::collections::VecDeque<u64>, v: u64, cap: usize) {
+        if dq.len() == cap {
+            dq.pop_front();
+        }
+        dq.push_back(v);
+    }
+    fn sorted(dq: &std::collections::VecDeque<u64>) -> Vec<u64> {
+        let mut v: Vec<u64> = dq.iter().copied().collect();
+        v.sort_unstable();
+        v
+    }
+    pub fn switch_median_ms(&self) -> u64 {
+        let v = Self::sorted(&self.switch_ms);
+        if v.is_empty() { 0 } else { v[v.len() / 2] }
+    }
+    pub fn switch_max_ms(&self) -> u64 {
+        self.switch_ms.iter().copied().max().unwrap_or(0)
+    }
+    pub fn render_median_ms(&self) -> u64 {
+        let v = Self::sorted(&self.render_ms);
+        if v.is_empty() { 0 } else { v[v.len() / 2] }
+    }
+    pub fn render_max_ms(&self) -> u64 {
+        self.render_ms.iter().copied().max().unwrap_or(0)
+    }
+    pub fn record_apply(&mut self, ms: u64) {
+        self.applies += 1;
+        self.last_switch_ms = ms;
+        Self::push(&mut self.switch_ms, ms, 100);
+    }
+    pub fn record_render(&mut self, ms: u64, cache_hit: bool) {
+        if cache_hit { self.hits += 1 } else { self.misses += 1 }
+        Self::push(&mut self.render_ms, ms, 200);
+    }
+}
+
 /// Everything the daemon owns; also the wayland EventQueue state.
 pub struct Daemon {
     pub paths: Paths,
@@ -80,6 +129,9 @@ pub struct Daemon {
     pub layer_shell: Option<ZwlrLayerShellV1>,
     pub outputs: Vec<Out>,
     pub running: bool,
+    /// The compositor went away (niri restart / session end): exit 43.
+    pub compositor_lost: bool,
+    pub bench: Bench,
     next_id: usize,
     qh: Option<QueueHandle<Daemon>>,
 }
@@ -93,6 +145,8 @@ impl Daemon {
             layer_shell: None,
             outputs: Vec::new(),
             running: true,
+            compositor_lost: false,
+            bench: Bench::default(),
             next_id: 0,
             qh: None,
         }
@@ -193,8 +247,22 @@ impl Daemon {
         let b = &mut out.buffers[slot];
         let Some(mmap) = b.mmap.as_mut() else { return };
         let words = mmap_to_words(mmap);
-        match render::render_into(&self.paths, &cfg, &entry, (out.bw, out.bh), words) {
-            Ok(label) => out.label = Some(label),
+        let t0 = std::time::Instant::now();
+        let rendered = render::render_into(&self.paths, &cfg, &entry, (out.bw, out.bh), words);
+        self.bench.record_render(t0.elapsed().as_millis() as u64, rendered.as_ref().map(|r| r.1).unwrap_or(false));
+        match rendered {
+            Ok((label, hit)) => {
+                out.label = Some(label);
+                log::debug!(
+                    "rendered {} ({}×{} buffer) {} in {} ms (variant cache {})",
+                    out.name,
+                    out.bw,
+                    out.bh,
+                    out.label.as_deref().unwrap_or("?"),
+                    t0.elapsed().as_millis(),
+                    if hit { "hit" } else { "MISS" }
+                );
+            }
             Err(e) => {
                 log::error!("render for {} failed: {e:#}", out.name);
                 return;
@@ -207,13 +275,6 @@ impl Daemon {
         surface.commit();
         out.buffers[slot].busy = true;
         out.dirty = false;
-        log::debug!(
-            "rendered {} ({}×{} buffer) {}",
-            out.name,
-            out.bw,
-            out.bh,
-            out.label.as_deref().unwrap_or("?")
-        );
         let _ = conn;
     }
 

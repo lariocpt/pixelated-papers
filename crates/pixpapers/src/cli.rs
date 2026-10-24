@@ -56,6 +56,9 @@ enum Cmd {
     Status {
         #[arg(long)]
         json: bool,
+        /// Live render timings, variant cache stats, RSS/fd (R8 proof)
+        #[arg(long)]
+        bench: bool,
     },
     /// Offline render to a PNG (no daemon needed): e.g. 1920x1080
     Export {
@@ -154,7 +157,13 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
             apply_now(paths);
             println!("cycle → {} · {} ({})", entry.id, entry.title, state_line(paths));
         }
-        Cmd::Status { json } => status::status(paths, cfg, json),
+        Cmd::Status { json, bench } => {
+            if bench {
+                status::status_bench(paths, cfg, json)
+            } else {
+                status::status(paths, cfg, json)
+            }
+        }
         Cmd::Export { id, size, pixel, placement, bg, gutter, out } => {
             let (w, h) = parse_size(&size)?;
             let overrides = Settings { pixel, placement, bg_color: bg, gutter_px: gutter };
