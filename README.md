@@ -16,7 +16,7 @@ nearest-neighbour blocks over a real image.
 ## Quickstart
 
 ```sh
-cargo install --path .
+cargo install --path crates/pixpapers
 pixpapers add ~/Pictures/nebula.png
 pixpapers list                       # ids + current
 pixpapers set <id>                   # auto-starts the daemon
@@ -68,7 +68,7 @@ The full numbers, what they mean and where they wash out are in
 ## Install
 
 - **Arch**: PKGBUILD draft in [`contrib/packaging/`](contrib/packaging).
-- **From source**: `cargo install --path .` (stable toolchain ≥ 1.85).
+- **From source**: `cargo install --path crates/pixpapers` (stable toolchain ≥ 1.85).
 - Binary needs `WAYLAND_DISPLAY` to render; every other command works
   headless.
 

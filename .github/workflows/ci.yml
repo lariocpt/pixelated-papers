@@ -37,5 +37,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install --path . --locked
+      - run: cargo install --path crates/pixpapers --locked
       - run: pixpapers --version && pixpapers status; test $? -le 2
