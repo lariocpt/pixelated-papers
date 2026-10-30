@@ -4,6 +4,8 @@
 mod cli;
 mod commands;
 mod daemon;
+#[cfg(test)]
+mod harness;
 mod ipc;
 mod status;
 
