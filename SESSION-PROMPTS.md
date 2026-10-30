@@ -171,8 +171,21 @@ and S2 (CLI) are merged. Before starting, read:
   README.md                  — the size table this step updates
   test/bench-daemon.sh       — how benches are scripted in this repo
 
-TASK — measure, then document. No behavior changes, no new user-visible
-anything; if a number forces a code change, stop and report instead.
+TASK 0 (small, display-only — S2's flagged overflow; do this first):
+the per-output variant label in crates/pixpapers/src/daemon/render.rs
+(render_into returns format!("{}/{}", s.pixel, s.placement)) still doesn't
+carry the v0.2 look. Extend it to mirror the cache-key convention:
+    {pixel}/{placement}-{Q}          Q always, same token set as the cache key
+    {pixel}/{placement}-{Q}-{D}      D only when dither != none
+e.g. "16/fit-auto", "16/fit-vga-fs". The ResolvedSettings (palette + dither)
+is already in scope in render_into. No test/ script parses the label (grep
+to confirm that holds); update any harness/golden that does. Note the label
+format in docs/CLI.md's status section. One commit: "pixpapers: per-output
+variant label carries palette/dither".
+
+TASK — measure, then document. Apart from TASK 0: no behavior changes, no
+new user-visible anything; if a number forces a code change, stop and
+report instead.
 
 Bench (release only, scripted so the numbers are reproducible — put the
 scripts under test/ with the repo's script style, e.g. test/bench-dither.sh):
@@ -182,7 +195,8 @@ scripts under test/ with the repo's script style, e.g. test/bench-dither.sh):
 - Variant byte sizes for the 1080p and 4K test fixtures: v0.1 auto-palette
   baseline vs the v2 default path (auto, dither none) vs a couple of
   representative named palettes. The v0.1 baseline is measured from the v0.1
-  code (git worktree or stash the S1 commits temporarily — measure both,
+  code (git worktree at the parent of the first S1 commit — the S1 session
+  captured its byte-identity goldens from that same base — measure both,
   restore state cleanly).
 
 DOCUMENT:
@@ -200,8 +214,8 @@ risk row — do not silently skip or "fix" the pipeline.
 ACCEPTANCE:
 - Every number in the new docs has script + commit; rerunning the scripts
   reproduces the numbers within run-to-run noise.
-- No source changes (test/ scripts and docs/ only; a test-only helper is
-  allowed, clearly named).
+- No source changes beyond TASK 0 (test/ scripts and docs/ only; a
+  test-only helper is allowed, clearly named).
 - Cross-cutting gate green.
 - Commits small: "test: bench-dither script", "docs: PERF dither section",
   "docs: README size table v2".
