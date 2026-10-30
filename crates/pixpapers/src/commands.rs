@@ -81,8 +81,8 @@ pub fn list(paths: &Paths) -> Result<()> {
         return Ok(());
     }
     println!(
-        "{:<10} {:<24} {:<7} {:<13} {:>10} {:>8}",
-        "id", "title", "pixel", "placement", "size", "file"
+        "{:<10} {:<24} {:<7} {:<13} {:<8} {:<8} {:>10} {:>8}",
+        "id", "title", "pixel", "placement", "palette", "dither", "size", "file"
     );
     for e in &lib.entries {
         let mark = if lib.current.as_deref() == Some(e.id.as_str()) {
@@ -90,13 +90,15 @@ pub fn list(paths: &Paths) -> Result<()> {
         } else {
             " "
         };
-        let (px, pl) = display_settings(e);
+        let (px, pl, pal, di) = display_settings(e);
         println!(
-            "{mark}{:<9} {:<24.24} {:<7} {:<13} {:>6}×{:<3} {:>7}",
+            "{mark}{:<9} {:<24.24} {:<7} {:<13} {:<8} {:<8} {:>6}×{:<3} {:>7}",
             e.id,
             e.title,
             px,
             pl,
+            pal,
+            di,
             e.width,
             format!("{}", e.height),
             human_bytes(e.original_bytes)
@@ -400,7 +402,10 @@ pub fn optimize_all(paths: &Paths, cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-pub fn display_settings(e: &Entry) -> (String, String) {
+/// Display strings for `list`: the entry's own knob when set, otherwise the
+/// resolved value marked `*` (inherit the config default) — the marker
+/// convention of pixel/placement, extended to palette/dither.
+pub fn display_settings(e: &Entry) -> (String, String, String, String) {
     let cfg = Config::default();
     let r = ResolvedSettings::resolve(&e.settings, &cfg);
     let px = e
@@ -413,7 +418,17 @@ pub fn display_settings(e: &Entry) -> (String, String) {
         .placement
         .map(|p| p.to_string())
         .unwrap_or_else(|| format!("{}*", r.placement));
-    (px, pl)
+    let pal = e
+        .settings
+        .palette
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| format!("{}*", r.palette));
+    let di = e
+        .settings
+        .dither
+        .map(|d| d.to_string())
+        .unwrap_or_else(|| format!("{}*", r.dither));
+    (px, pl, pal, di)
 }
 
 fn now_unix() -> i64 {

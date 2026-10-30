@@ -22,9 +22,25 @@ pub fn local_report(paths: &Paths, cfg: &Config) -> StatusReport {
     }
 }
 
-pub fn print_report(r: &StatusReport, json: bool) {
+/// The report as JSON, with the config's palette/dither defaults merged in
+/// CLI-side — the daemon's report shape stays untouched (it predates the
+/// v0.2 knobs), same enrichment pattern as the local variant scan in
+/// `status_bench`.
+fn report_value(r: &StatusReport, cfg: &Config) -> serde_json::Value {
+    let mut v = serde_json::to_value(r).unwrap();
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert("default_palette".into(), serde_json::json!(cfg.palette));
+        obj.insert("default_dither".into(), serde_json::json!(cfg.dither));
+    }
+    v
+}
+
+pub fn print_report(r: &StatusReport, cfg: &Config, json: bool) {
     if json {
-        println!("{}", serde_json::to_string_pretty(r).unwrap());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report_value(r, cfg)).unwrap()
+        );
         return;
     }
     let pid = r
@@ -38,14 +54,16 @@ pub fn print_report(r: &StatusReport, json: bool) {
     };
     println!("daemon:   {state} (pid {pid})");
     println!(
-        "policy:   pixelation {} · default {} / {}",
+        "policy:   pixelation {} · default {} / {} · palette {} · dither {}",
         if r.enabled {
             "on"
         } else {
             "OFF (originals only)"
         },
         r.default_pixel,
-        r.default_placement
+        r.default_placement,
+        cfg.palette,
+        cfg.dither
     );
     println!("current:  {}", r.current.as_deref().unwrap_or("(none)"));
     if r.outputs.is_empty() {
@@ -122,9 +140,9 @@ pub fn status(paths: &Paths, cfg: &Config, json: bool) {
         std::time::Duration::from_millis(800),
     ) {
         Ok(resp) if resp.ok && resp.data.is_some() => {
-            print_report(resp.data.as_ref().unwrap(), json)
+            print_report(resp.data.as_ref().unwrap(), cfg, json)
         }
-        _ => print_report(&local_report(paths, cfg), json),
+        _ => print_report(&local_report(paths, cfg), cfg, json),
     }
 }
 
@@ -144,20 +162,23 @@ pub fn status_bench(paths: &Paths, cfg: &Config, json: bool) {
             r.variant_bytes = bytes;
             r.variants_on_disk = count;
             if !json {
-                print_report(&r, false);
+                print_report(&r, cfg, false);
             }
             r
         }
         _ => {
             let r = local_report(paths, cfg);
             if !json {
-                print_report(&r, false);
+                print_report(&r, cfg, false);
             }
             r
         }
     };
     if json {
-        println!("{}", serde_json::to_string_pretty(&r).unwrap());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report_value(&r, cfg)).unwrap()
+        );
         return;
     }
     if r.bench.is_none() {
