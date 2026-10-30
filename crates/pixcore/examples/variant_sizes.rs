@@ -73,7 +73,7 @@ fn row(orig: &RgbaImage, orig_png: usize, out: (u32, u32), preset: &str, label: 
         dither: Dither::None,
     };
     let canvas = pixcore::variant::generate_from_image(orig, &s, out);
-    let bytes = pixcore::variant::encode_variant(&canvas, true).len();
+    let bytes = pixcore::variant::encode_variant(&canvas, PaletteMode::Auto).len();
     let ratio = orig_png as f64 / bytes as f64;
     println!(
         "| {label} | {preset} | {}×{} | {} | {} | {:.0}× |",

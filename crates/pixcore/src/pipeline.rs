@@ -208,7 +208,7 @@ pub fn apply_palette(img: &RgbaImage, pal: &[Rgba<u8>]) -> RgbaImage {
     out
 }
 
-fn nearest_index(pal: &[Rgba<u8>], r: i64, g: i64, b: i64) -> usize {
+pub(crate) fn nearest_index(pal: &[Rgba<u8>], r: i64, g: i64, b: i64) -> usize {
     let mut best = 0usize;
     let mut bestd = u64::MAX;
     for (i, c) in pal.iter().enumerate() {

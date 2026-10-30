@@ -6,10 +6,12 @@
 use std::fs;
 use std::path::PathBuf;
 
+use image::{Rgba, RgbaImage};
+
 use crate::PIPELINE_VERSION;
 use crate::error::{PixError, Result};
 use crate::optimize;
-use crate::palette::{self, PaletteMode};
+use crate::palette::{self, Dither, PaletteMode};
 use crate::paths::Paths;
 use crate::pipeline;
 use crate::placement::Placement;
@@ -26,24 +28,29 @@ pub struct VariantKey<'a> {
     pub _id: &'a str, // phantom-ish clarity; path building scopes per entry
 }
 
-/// `library/<id>/variants/v<V>[-pal]-<pixel>-<placement>[-g<g>]-<W>x<H>.png`
+/// `library/<id>/variants/v<V>-<pixel>-<placement>[-g<g>]-<W>x<H>-<Q>[-<D>].png`
+/// — v2 carries the palette mode token (`-auto`, `-gen16`, …) and, when not
+/// `none`, the dither token: every (mode, dither) cell is its own cache
+/// entry (`Dither::None` omits the segment, keeping the v0.1 look's shape).
 pub fn variant_path(paths: &Paths, id: &str, s: &ResolvedSettings, out: (u32, u32)) -> PathBuf {
-    let pal = if s.palette != PaletteMode::Off {
-        "-pal"
-    } else {
-        ""
-    };
     let g = if s.placement == Placement::CoverGutter {
         format!("-g{}", s.gutter_px)
     } else {
         String::new()
     };
+    let d = if s.dither == Dither::None {
+        String::new()
+    } else {
+        format!("-{}", s.dither)
+    };
     paths.variants_dir(id).join(format!(
-        "v{PIPELINE_VERSION}{pal}-{pixel}-{placement}{g}-{W}x{H}.png",
+        "v{PIPELINE_VERSION}-{pixel}-{placement}{g}-{W}x{H}-{Q}{D}.png",
         pixel = s.pixel,
         placement = s.placement,
         W = out.0,
-        H = out.1
+        H = out.1,
+        Q = s.palette,
+        D = d,
     ))
 }
 
@@ -61,7 +68,7 @@ pub fn generate(
     }
     let orig = original_path(paths, id)?;
     let generated = generate_from_file(&orig, s, out)?;
-    let bytes = encode_variant(&generated, palette::encode_as_palette_png(s.palette));
+    let bytes = encode_variant(&generated, s.palette);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| PixError::io(parent, e))?;
     }
@@ -109,11 +116,12 @@ pub fn generate_from_image(
     var
 }
 
-/// Encode a variant as PNG. With `palette`, write a true palette PNG via the
-/// `png` crate (absolute-minimum bytes); otherwise plain RGBA.
-pub fn encode_variant(img: &image::RgbaImage, palette: bool) -> Vec<u8> {
-    if palette {
-        if let Some(bytes) = encode_palette_png(img) {
+/// Encode a variant as PNG. Every quantizing mode writes a true palette PNG
+/// via the `png` crate (absolute-minimum bytes; named tables use exactly
+/// their entries); `Off` stays plain RGBA.
+pub fn encode_variant(img: &image::RgbaImage, mode: PaletteMode) -> Vec<u8> {
+    if palette::encode_as_palette_png(mode) {
+        if let Some(bytes) = encode_palette_png(img, mode) {
             return bytes;
         }
     }
@@ -129,13 +137,92 @@ pub fn encode_variant(img: &image::RgbaImage, palette: bool) -> Vec<u8> {
     out
 }
 
-/// Palette PNG with index 0 reserved for transparent pixels. `None` on any
-/// encoder trouble (caller falls back to RGBA).
-fn encode_palette_png(img: &image::RgbaImage) -> Option<Vec<u8>> {
-    // index 0 (transparent) + palette must fit 8-bit indexing (≤256 entries).
-    let pal = pipeline::median_cut(img, 255);
-    // PLTE: 3 bytes per entry; index 0 is a placeholder black, tRNS makes it
-    // fully transparent.
+/// The exact PLTE content for `img` under `mode`, index 0 *not* reserved
+/// (the encoder adds the transparent slot). `Auto` re-runs the v0.1
+/// `median_cut(255)` without deduplication so already-cached variants stay
+/// byte-identical; named tables are deduplicated (first occurrence wins —
+/// the NES table repeats black 12×), Gen16 re-runs `median_cut(16)` + snap.
+/// Deterministic for a given `img`.
+fn encode_palette(mode: PaletteMode, img: &RgbaImage) -> Vec<Rgba<u8>> {
+    match mode {
+        PaletteMode::Auto => pipeline::median_cut(img, 255),
+        PaletteMode::Gen16 => dedup(
+            pipeline::median_cut(img, 16)
+                .into_iter()
+                .map(palette::snap_rgb555),
+        ),
+        named => dedup(
+            named
+                .fixed_table()
+                .expect("named mode has a table")
+                .iter()
+                .copied(),
+        ),
+    }
+}
+
+fn dedup(iter: impl Iterator<Item = Rgba<u8>>) -> Vec<Rgba<u8>> {
+    let mut out: Vec<Rgba<u8>> = Vec::with_capacity(64);
+    for c in iter {
+        if !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Palette PNG. ≤ 255 entries use the v0.1 scheme verbatim: index 0 is a
+/// placeholder-black transparent slot (tRNS), real entries shifted +1. A
+/// full 256-entry table (VGA) has no room for that slot: with no
+/// transparent pixels the table is written as-is; otherwise the first
+/// entry no opaque pixel uses becomes the transparent index (documented
+/// merge), and if every entry is used the caller falls back to RGBA.
+/// `None` on any encoder trouble.
+fn encode_palette_png(img: &image::RgbaImage, mode: PaletteMode) -> Option<Vec<u8>> {
+    let pal = encode_palette(mode, img);
+    if pal.is_empty() || pal.len() > 256 {
+        return None;
+    }
+    let has_transparent = img.pixels().any(|p| p.0[3] <= 8);
+    let mut buf = Vec::new();
+    if pal.len() == 256 && has_transparent {
+        // Free one index: the first table entry no opaque pixel uses.
+        let mut used = [false; 256];
+        for p in img.pixels().filter(|p| p.0[3] > 8) {
+            used[pipeline::nearest_index(&pal, p.0[0] as i64, p.0[1] as i64, p.0[2] as i64)] = true;
+        }
+        let tidx = used.iter().position(|u| !u)? as u8;
+        let indices: Vec<u8> = img
+            .pixels()
+            .map(|p| {
+                if p.0[3] <= 8 {
+                    tidx
+                } else {
+                    pipeline::nearest_index(&pal, p.0[0] as i64, p.0[1] as i64, p.0[2] as i64) as u8
+                }
+            })
+            .collect();
+        let mut trns = vec![255u8; 256];
+        trns[tidx as usize] = 0;
+        let ok = {
+            let mut enc = png::Encoder::new(&mut buf, img.width(), img.height());
+            enc.set_color(png::ColorType::Indexed);
+            enc.set_depth(png::BitDepth::Eight);
+            enc.set_palette(
+                pal.iter()
+                    .flat_map(|c| [c.0[0], c.0[1], c.0[2]])
+                    .collect::<Vec<_>>(),
+            );
+            enc.set_trns(trns);
+            match enc.write_header() {
+                Ok(mut w) => w.write_image_data(&indices).is_ok(),
+                Err(_) => false,
+            }
+        };
+        return if ok { Some(buf) } else { None };
+    }
+    // v0.1 scheme: index 0 = transparent placeholder black (only used when
+    // the image has transparent pixels; harmless otherwise), entries +1.
     let mut plte: Vec<u8> = vec![0, 0, 0];
     for c in &pal {
         plte.extend_from_slice(&[c.0[0], c.0[1], c.0[2]]);
@@ -161,13 +248,12 @@ fn encode_palette_png(img: &image::RgbaImage) -> Option<Vec<u8>> {
             best as u8
         })
         .collect();
-    let mut buf = Vec::new();
     let ok = {
         let mut enc = png::Encoder::new(&mut buf, img.width(), img.height());
         enc.set_color(png::ColorType::Indexed);
         enc.set_depth(png::BitDepth::Eight);
         enc.set_palette(plte);
-        enc.set_trns(vec![0u8]); // only index 0 is transparent
+        enc.set_trns(vec![0u8]); // only index 0 is transparent (v0.1 verbatim)
         match enc.write_header() {
             Ok(mut w) => w.write_image_data(&indices).is_ok(),
             Err(_) => false,
@@ -225,6 +311,7 @@ pub fn optimize_all(paths: &Paths, cfg: &crate::config::Optimize) -> Vec<(String
 mod tests {
     use super::*;
     use crate::pipeline::testsrc;
+    use proptest::prelude::*;
 
     fn settings(pixel: &str) -> ResolvedSettings {
         ResolvedSettings {
@@ -244,8 +331,121 @@ mod tests {
         let name = p.file_name().unwrap().to_string_lossy().into_owned();
         assert_eq!(
             name,
-            format!("v{PIPELINE_VERSION}-pal-16-fit-1920x1080.png")
+            format!("v{PIPELINE_VERSION}-16-fit-1920x1080-auto.png")
         );
+        // dither token appears only for non-none; gutter stays conditional.
+        let s = ResolvedSettings {
+            dither: Dither::FloydSteinberg,
+            placement: Placement::CoverGutter,
+            gutter_px: 12,
+            ..settings("8")
+        };
+        let name = variant_path(
+            &Paths::with_root("/tmp/x".as_ref()),
+            "id1",
+            &s,
+            (3840, 2160),
+        )
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+        assert_eq!(
+            name,
+            format!("v{PIPELINE_VERSION}-8-cover-gutter-g12-3840x2160-auto-fs.png")
+        );
+    }
+
+    // Acceptance (PLAN-30 A.4): every (palette, dither) cell is its own
+    // cache file — 48 distinct names.
+    proptest! {
+        #[test]
+        fn distinct_mode_dither_cells_get_distinct_paths(qi in 0..8u8, di in 0..6u8) {
+            let mut seen: std::collections::HashSet<String> = Default::default();
+            let _ = (qi, di); // the loop below is the exhaustive space; proptest drives the sample count
+            for q in PaletteMode::ALL {
+                for d in Dither::ALL {
+                    let s = ResolvedSettings {
+                        palette: q,
+                        dither: d,
+                        ..settings("16")
+                    };
+                    let name = variant_path(&Paths::with_root("/tmp/x".as_ref()), "id1", &s, (1920, 1080))
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned();
+                    prop_assert!(seen.insert(name.clone()), "collision at {q}/{d}: {name}");
+                }
+            }
+        }
+    }
+
+    /// Acceptance (PLAN-30 A.4): Auto + None is **byte-identical to v0.1**.
+    /// goldens/v01/ was captured from the untouched v0.1 tree (commit
+    /// 29ef2b4) via the public API on the same sources (pixel 8, Fit,
+    /// 320×180); sha256 recorded in the wiring commit message.
+    #[test]
+    fn auto_none_matches_v01_bytes() {
+        for (name, src) in [
+            ("photo128x80", testsrc::photo128x80()),
+            ("gradient64", testsrc::gradient64()),
+        ] {
+            for (tag, palette) in [("auto", PaletteMode::Auto), ("off", PaletteMode::Off)] {
+                let s = ResolvedSettings {
+                    pixel: "8".parse().unwrap(),
+                    placement: Placement::Fit,
+                    palette,
+                    ..ResolvedSettings::resolve(&Default::default(), &Default::default())
+                };
+                let canvas = generate_from_image(&src, &s, (320, 180));
+                let bytes = encode_variant(&canvas, palette);
+                let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join(format!("goldens/v01/{name}-{tag}.png"));
+                let want = std::fs::read(&golden).expect("v0.1 golden present");
+                assert_eq!(
+                    bytes, want,
+                    "{name}/{tag} differs from the v0.1 capture (regression!)"
+                );
+            }
+        }
+    }
+
+    /// Named modes encode with exactly their table (deduped), index 0 =
+    /// transparent slot. GB and NES (black-heavy) pin the contract.
+    #[test]
+    fn named_encode_uses_exact_table() {
+        for (mode, table) in [
+            (PaletteMode::Gb, PaletteMode::Gb.fixed_table().unwrap()),
+            (PaletteMode::Nes, PaletteMode::Nes.fixed_table().unwrap()),
+        ] {
+            let canvas = generate_from_image(
+                &testsrc::photo128x80(),
+                &ResolvedSettings {
+                    palette: mode,
+                    ..settings("16")
+                },
+                (320, 180),
+            );
+            let bytes = encode_variant(&canvas, mode);
+            let decoder = png::Decoder::new(std::io::Cursor::new(&bytes));
+            let reader = decoder.read_info().unwrap();
+            let mut want: Vec<u8> = vec![0, 0, 0]; // index 0 placeholder
+            let mut seen: Vec<[u8; 3]> = Vec::new();
+            for c in table {
+                let rgb = [c.0[0], c.0[1], c.0[2]];
+                if !seen.contains(&rgb) {
+                    seen.push(rgb);
+                    want.extend_from_slice(&rgb);
+                }
+            }
+            assert_eq!(
+                reader.info().palette.as_deref(),
+                Some(want.as_slice()),
+                "{mode} PLTE"
+            );
+            assert!(bytes.len() < 20 * 1024, "{mode} variant size");
+        }
     }
 
     #[test]
@@ -261,7 +461,7 @@ mod tests {
         });
         let v = generate_from_image(&photo, &settings("16"), (1920, 1080));
         assert_eq!((v.width(), v.height()), (120, 68)); // ceil(1920/16)×ceil(1080/16)
-        let bytes = encode_variant(&v, true);
+        let bytes = encode_variant(&v, PaletteMode::Auto);
         assert!(
             bytes.len() < 20 * 1024,
             "variant {} KB > 20 KB budget",

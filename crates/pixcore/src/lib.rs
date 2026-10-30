@@ -33,8 +33,9 @@ pub use variant::{VariantKey, variant_path};
 pub const MANIFEST_VERSION: u32 = 1;
 /// Bump on **any** pipeline behavior change (filters, quantizer, rounding,
 /// placement math) — stale variant caches invalidate automatically because
-/// the version is part of the cache filename.
-pub const PIPELINE_VERSION: u32 = 1;
+/// the version is part of the cache filename. v2: cache keys carry the
+/// palette mode + dither, quantize/dither stages exist (PLAN-30 §A).
+pub const PIPELINE_VERSION: u32 = 2;
 
 /// XDG directory namespace (and `PIXPAPERS_HOME` override root name).
 pub const APP_DIR: &str = "pixpapers";
