@@ -16,8 +16,9 @@ WAYLAND_DISPLAY=wayland-1 test/verify-live.sh target/release/pixpapers
 WAYLAND_DISPLAY=wayland-1 test/bench-daemon.sh target/release/pixpapers 25
 ```
 
-Tests: 37 pixcore (config atomicity, manifest version guard, placement
-proptests, pipeline goldens, versioned variant cache). The daemon's
+Tests: 62 pixcore (config atomicity + legacy palette bool, manifest
+version guard + palette/dither knobs, placement proptests, quantize goldens
++ v0.1 byte-identity goldens, versioned variant cache). The daemon's
 IPC/loop logic runs against in-process harnesses — headless is normal.
 
 ## Hard rules

@@ -51,3 +51,11 @@ normal`, default 16) on a wlr-layer-shell Background surface, niri-first.
 ## [Unreleased]
 - v0.2 targets: wp_viewporter + wp_fractional_scale_v1 exact buffers;
   headless-sway CI smoke; multi-monitor hardening from field reports.
+- pixcore: quantize stage — palette modes `auto / nes / gb / cga / ega /
+  vga / gen16` × dithers `none / fs / atkinson / bayer2 / bayer4 / bayer8`,
+  deterministic integer pipeline (12 golden cells checked in).
+  Config `palette` is now a string (`auto` default; legacy `true`/`false`
+  TOML bools still load) and config/manifest gain `dither`; variant cache
+  keys are v2 (v0.1 caches invalidate — they are disposable). `auto` +
+  `none` renders **byte-identical to v0.1**, verified against goldens
+  captured from the pre-change tree.

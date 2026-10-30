@@ -10,8 +10,11 @@ no "off" switch you have to remember to click.
 (`fit / cover-gutter / cover-crop / stretch`), same source image.*
 
 The block sizes are literal pixels (plus `normal`). The names are
-vibe, not accuracy: nothing console-palette, no dithering — just
-nearest-neighbour blocks over a real image.
+vibe, not accuracy: palette modes (`auto / nes / gb / cga / ega / vga /
+gen16`) and dithers (`fs / atkinson / bayer2 / bayer4 / bayer8`) map onto
+canonical tables deterministically — flavour, never hardware emulation.
+The default look is unchanged: nearest-neighbour blocks over a real
+image, median-cut palette.
 
 ## Quickstart
 
