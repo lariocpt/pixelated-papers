@@ -83,8 +83,9 @@ pub enum Dither { None, FloydSteinberg, Atkinson, Bayer2, Bayer4, Bayer8 }
 ```
 
 - **Built-in palettes** (static tables, `crates/pixcore/src/palette/`):
-  - `nes` 192 fixed palette (the well-known NES master table; per-sprite
-    4-color subsets are *not* emulated — documented)
+  - `nes` fixed palette (the well-known 2C02 master table, 64 entries —
+    the canonical 192-byte `.pal`; per-sprite 4-color subsets are *not*
+    emulated — documented in tables.rs)
   - `gb` 4 DMG greens
   - `cga` 16 · `ega` 64 (classic 4×4×4) · `vga` 256 (standard VGA palette)
   - `gen16`: **per-image** — median-cut to 16, snapped to the 15-bit

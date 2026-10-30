@@ -122,6 +122,10 @@ commands' shape and behavior contract exactly:
   pixpapers default dither  <algo>
   export gains: --palette <mode>  --dither <algo>  (override, not persisted)
 
+- The `nes` palette is the 64-entry 2C02 master table (provenance:
+  crates/pixcore/src/palette/tables.rs) — do not write "192 colors" in
+  help or CLI.md.
+
 - Per-knob behavior contract, same as the existing knobs: editing a knob on the
   CURRENT entry re-applies immediately (Apply IPC, auto-spawn daemon exactly
   like the existing commands); on a non-current entry it just records.
