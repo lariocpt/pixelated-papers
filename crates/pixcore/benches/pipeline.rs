@@ -9,7 +9,7 @@
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use image::{ImageBuffer, Rgba, RgbaImage};
-use pixcore::{Pixel, Placement, ResolvedSettings, RgbCss, pipeline, view};
+use pixcore::{Dither, PaletteMode, Pixel, Placement, ResolvedSettings, RgbCss, pipeline, view};
 use std::hint::black_box;
 
 /// Deterministic photo-ish source: sine gradients, no hard edges — the case
@@ -27,13 +27,14 @@ fn photo(w: u32, h: u32) -> RgbaImage {
     img
 }
 
-fn settings(pixel: Pixel, placement: Placement, palette: bool) -> ResolvedSettings {
+fn settings(pixel: Pixel, placement: Placement, palette: PaletteMode) -> ResolvedSettings {
     ResolvedSettings {
         pixel,
         placement,
         bg_color: RgbCss::BLACK,
         gutter_px: 24,
         palette,
+        dither: Dither::None,
     }
 }
 
@@ -125,7 +126,7 @@ fn cold_switch(c: &mut Criterion) {
     // palette → stretch into buffer. Representative photo → 1080p @ 16.
     let src = photo(1280, 800);
     let out = (1920u32, 1080u32);
-    let s = settings(parse("16"), Placement::CoverCrop, true);
+    let s = settings(parse("16"), Placement::CoverCrop, PaletteMode::Auto);
     let mut buf = vec![0u32; (out.0 * out.1) as usize];
     g.bench_function("photo1280_to_1080p@16_pal", |b| {
         b.iter(|| {
@@ -134,7 +135,7 @@ fn cold_switch(c: &mut Criterion) {
             pixcore::render::composite_into(&canvas, &v, s.bg_color, black_box(&mut buf));
         });
     });
-    let s4 = settings(parse("8"), Placement::Stretch, true);
+    let s4 = settings(parse("8"), Placement::Stretch, PaletteMode::Auto);
     let out4 = (3840u32, 2160u32);
     let mut buf4 = vec![0u32; (out4.0 * out4.1) as usize];
     g.bench_function("photo1280_to_4k@8_pal", |b| {

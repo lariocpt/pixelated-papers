@@ -8,6 +8,7 @@ use crate::MANIFEST_VERSION;
 use crate::RgbCss;
 use crate::config::write_atomic;
 use crate::error::{PixError, Result};
+use crate::palette::{Dither, PaletteMode};
 use crate::paths::Paths;
 use crate::placement::Placement;
 use crate::preset::Pixel;
@@ -23,6 +24,10 @@ pub struct Settings {
     pub bg_color: Option<RgbCss>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gutter_px: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub palette: Option<PaletteMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dither: Option<Dither>,
 }
 
 /// One library entry. The **original** lives on disk at
@@ -201,6 +206,26 @@ mod tests {
             .filter(|f| f.file_name().to_string_lossy().ends_with(".tmp"))
             .collect();
         assert!(leftovers.is_empty());
+    }
+
+    /// Acceptance (PLAN-30 A.4): old manifests (no palette/dither fields)
+    /// parse unchanged — missing means "inherit the config default".
+    #[test]
+    fn settings_knobs_parse_old_and_new_forms() {
+        let old: Settings = serde_json::from_str(r#"{"pixel":"16"}"#).unwrap();
+        assert_eq!(old.palette, None);
+        assert_eq!(old.dither, None);
+        // New fields serialize as lowercase tokens, skipped when None.
+        let s = Settings {
+            palette: Some(PaletteMode::Nes),
+            dither: Some(Dither::Atkinson),
+            ..Default::default()
+        };
+        let j = serde_json::to_string(&s).unwrap();
+        assert_eq!(j, r#"{"palette":"nes","dither":"atkinson"}"#);
+        let back: Settings = serde_json::from_str(&j).unwrap();
+        assert_eq!(back, s);
+        assert_eq!(serde_json::to_string(&Settings::default()).unwrap(), "{}");
     }
 
     #[test]

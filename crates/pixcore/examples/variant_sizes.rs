@@ -7,7 +7,7 @@
 //! no wall-clock timing (this is a byte-size fact table, not a benchmark).
 
 use image::{ImageBuffer, Rgba, RgbaImage};
-use pixcore::{Pixel, Placement, ResolvedSettings, RgbCss};
+use pixcore::{Dither, PaletteMode, Pixel, Placement, ResolvedSettings, RgbCss};
 
 fn photo(w: u32, h: u32) -> RgbaImage {
     let mut img = ImageBuffer::new(w, h);
@@ -69,7 +69,8 @@ fn row(orig: &RgbaImage, orig_png: usize, out: (u32, u32), preset: &str, label: 
         placement: Placement::CoverCrop,
         bg_color: RgbCss::BLACK,
         gutter_px: 24,
-        palette: true,
+        palette: PaletteMode::Auto,
+        dither: Dither::None,
     };
     let canvas = pixcore::variant::generate_from_image(orig, &s, out);
     let bytes = pixcore::variant::encode_variant(&canvas, true).len();

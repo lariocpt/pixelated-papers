@@ -8,6 +8,7 @@ use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
 use crate::color::RgbCss;
 use crate::config::Config;
 use crate::manifest::Settings;
+use crate::palette::{Dither, PaletteMode};
 use crate::placement::{Rect, View};
 use crate::preset::Pixel;
 
@@ -18,7 +19,8 @@ pub struct ResolvedSettings {
     pub placement: crate::placement::Placement,
     pub bg_color: RgbCss,
     pub gutter_px: u32,
-    pub palette: bool,
+    pub palette: PaletteMode,
+    pub dither: Dither,
 }
 
 impl ResolvedSettings {
@@ -31,7 +33,8 @@ impl ResolvedSettings {
             placement: entry.placement.unwrap_or(cfg.default_placement),
             bg_color: entry.bg_color.unwrap_or(cfg.default_bg_color),
             gutter_px: entry.gutter_px.unwrap_or(cfg.default_gutter_px),
-            palette: cfg.palette,
+            palette: entry.palette.unwrap_or(cfg.palette),
+            dither: entry.dither.unwrap_or(cfg.dither),
         }
     }
 
@@ -161,5 +164,27 @@ mod tests {
         };
         assert_eq!(ResolvedSettings::resolve(&s2, &cfg).pixel, Pixel::B8); // R5 entry wins
         assert_eq!(r.unpixelated().pixel, Pixel::Normal); // R6
+        // palette/dither: entry overrides config default, None inherits (R5→R2).
+        assert_eq!(r.palette, PaletteMode::Auto);
+        assert_eq!(r.dither, Dither::None);
+        let s3 = Settings {
+            palette: Some(PaletteMode::Gb),
+            dither: Some(Dither::Bayer4),
+            ..Default::default()
+        };
+        let r3 = ResolvedSettings::resolve(&s3, &cfg);
+        assert_eq!(r3.palette, PaletteMode::Gb);
+        assert_eq!(r3.dither, Dither::Bayer4);
+        let cfg2 = Config {
+            palette: PaletteMode::Vga,
+            dither: Dither::Atkinson,
+            ..Default::default()
+        };
+        let r4 = ResolvedSettings::resolve(&s, &cfg2);
+        assert_eq!(r4.palette, PaletteMode::Vga);
+        assert_eq!(r4.dither, Dither::Atkinson);
+        // R6 unpixelated must not touch the palette knobs.
+        assert_eq!(r3.unpixelated().palette, PaletteMode::Gb);
+        assert_eq!(r3.unpixelated().dither, Dither::Bayer4);
     }
 }

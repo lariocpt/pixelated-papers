@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use crate::PIPELINE_VERSION;
 use crate::error::{PixError, Result};
 use crate::optimize;
+use crate::palette::{self, PaletteMode};
 use crate::paths::Paths;
 use crate::pipeline;
 use crate::placement::Placement;
@@ -27,7 +28,11 @@ pub struct VariantKey<'a> {
 
 /// `library/<id>/variants/v<V>[-pal]-<pixel>-<placement>[-g<g>]-<W>x<H>.png`
 pub fn variant_path(paths: &Paths, id: &str, s: &ResolvedSettings, out: (u32, u32)) -> PathBuf {
-    let pal = if s.palette { "-pal" } else { "" };
+    let pal = if s.palette != PaletteMode::Off {
+        "-pal"
+    } else {
+        ""
+    };
     let g = if s.placement == Placement::CoverGutter {
         format!("-g{}", s.gutter_px)
     } else {
@@ -56,7 +61,7 @@ pub fn generate(
     }
     let orig = original_path(paths, id)?;
     let generated = generate_from_file(&orig, s, out)?;
-    let bytes = encode_variant(&generated, s.palette);
+    let bytes = encode_variant(&generated, palette::encode_as_palette_png(s.palette));
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| PixError::io(parent, e))?;
     }
@@ -96,9 +101,10 @@ pub fn generate_from_image(
         return pipeline::crop(orig, v.window);
     }
     let mut var = pipeline::downscale_to_variant(orig, &v, s.pixel.block_px());
-    if s.palette {
-        let pal = pipeline::median_cut(&var, 256);
-        var = pipeline::apply_palette(&var, &pal);
+    if s.palette != PaletteMode::Off {
+        // Auto + None is the exact v0.1 call sequence (median_cut +
+        // apply_palette), so those variants stay byte-identical.
+        var = pipeline::quantize(&var, s.palette, s.dither);
     }
     var
 }

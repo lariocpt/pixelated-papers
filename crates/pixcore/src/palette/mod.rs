@@ -166,6 +166,39 @@ impl Dither {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Legacy Config.palette bool (<- v0.1 `palette = true/false` in config.toml)
+// ---------------------------------------------------------------------------
+
+/// Deserialize a [`PaletteMode`] from its string **or** the legacy TOML
+/// bool (`true` → `Auto`, `false` → `Off`), so pre-v0.2 config files keep
+/// loading. Serialize as the plain string (new saves are string-only).
+pub(crate) mod palette_mode_compat {
+    use super::PaletteMode;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(mode: &PaletteMode, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(mode.token())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<PaletteMode, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Legacy {
+            Bool(bool),
+            Name(String),
+        }
+        match Deserialize::deserialize(d)? {
+            Legacy::Bool(on) => Ok(if on {
+                PaletteMode::Auto
+            } else {
+                PaletteMode::Off
+            }),
+            Legacy::Name(name) => name.parse().map_err(serde::de::Error::custom),
+        }
+    }
+}
+
 impl fmt::Display for PaletteMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.token())
@@ -259,6 +292,27 @@ mod tests {
         assert_eq!(PaletteMode::Cga.fixed_table().unwrap().len(), 16);
         assert_eq!(PaletteMode::Ega.fixed_table().unwrap().len(), 64);
         assert_eq!(PaletteMode::Vga.fixed_table().unwrap().len(), 256);
+    }
+
+    #[test]
+    fn legacy_bool_and_string_forms_deserialize() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct S {
+            #[serde(deserialize_with = "palette_mode_compat::deserialize")]
+            palette: PaletteMode,
+        }
+        let on: S = serde_json::from_str(r#"{"palette":true}"#).unwrap();
+        assert_eq!(on.palette, PaletteMode::Auto);
+        let off: S = serde_json::from_str(r#"{"palette":false}"#).unwrap();
+        assert_eq!(off.palette, PaletteMode::Off);
+        let named: S = serde_json::from_str(r#"{"palette":"vga"}"#).unwrap();
+        assert_eq!(named.palette, PaletteMode::Vga);
+        assert!(serde_json::from_str::<S>(r#"{"palette":"bogus"}"#).is_err());
+        // Serialization is always the string form (new saves never write bool).
+        assert_eq!(
+            serde_json::to_string(&PaletteMode::Auto).unwrap(),
+            "\"auto\""
+        );
     }
 
     #[test]

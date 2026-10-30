@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::color::RgbCss;
 use crate::error::{PixError, Result};
+use crate::palette::palette_mode_compat;
+use crate::palette::{Dither, PaletteMode};
 use crate::placement::Placement;
 use crate::preset::Pixel;
 
@@ -23,8 +25,15 @@ pub struct Config {
     pub default_gutter_px: u32,
     /// Reserved visibility floor (0 = off; presets are exact by design).
     pub min_visible_px: u32,
-    /// Palette-reduce variants (median-cut ≤256 colors) for tiny PNGs.
-    pub palette: bool,
+    /// Default palette quantization look (R2). `auto` is the v0.1 look
+    /// (median-cut ≤256); named modes map onto fixed console tables.
+    /// Legacy `palette = true/false` TOML bools still load (true→auto,
+    /// false→off); new saves write the string.
+    #[serde(with = "palette_mode_compat")]
+    pub palette: PaletteMode,
+    /// Default dither applied when mapping onto the palette (`none` = the
+    /// v0.1 look; deterministic for fixed input).
+    pub dither: Dither,
     pub optimize: Optimize,
     pub daemon: DaemonConfig,
 }
@@ -53,7 +62,8 @@ impl Default for Config {
             default_bg_color: RgbCss::BLACK,
             default_gutter_px: 24,
             min_visible_px: 0,
-            palette: true,
+            palette: PaletteMode::Auto,
+            dither: Dither::None,
             optimize: Optimize::default(),
             daemon: DaemonConfig::default(),
         }
@@ -154,12 +164,19 @@ mod tests {
 
     proptest! {
         #[test]
-        fn save_load_round_trips(q in 50u8..=100, g in 0u32..4096, enabled: bool, pal: bool) {
+        fn save_load_round_trips(
+            q in 50u8..=100,
+            g in 0u32..4096,
+            enabled: bool,
+            qi in 0..8u8,
+            di in 0..6u8,
+        ) {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("config.toml");
             let cfg = Config {
                 enabled,
-                palette: pal,
+                palette: PaletteMode::ALL[qi as usize],
+                dither: Dither::ALL[di as usize],
                 default_gutter_px: g,
                 optimize: Optimize { max_side: 3840, jpeg_quality: q },
                 ..Default::default()
@@ -167,5 +184,38 @@ mod tests {
             cfg.save(&path).unwrap();
             prop_assert_eq!(Config::load(&path).unwrap(), cfg);
         }
+    }
+
+    /// Acceptance (PLAN-30 A.4): v0.1 config files keep loading — the bool
+    /// knob maps to auto/off; new saves are string-only.
+    #[test]
+    fn legacy_palette_bool_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "palette = true\n").unwrap();
+        assert_eq!(Config::load(&path).unwrap().palette, PaletteMode::Auto);
+        fs::write(&path, "palette = false\n").unwrap();
+        assert_eq!(Config::load(&path).unwrap().palette, PaletteMode::Off);
+        fs::write(&path, "palette = \"nes\"\ndither = \"fs\"\n").unwrap();
+        let c = Config::load(&path).unwrap();
+        assert_eq!(c.palette, PaletteMode::Nes);
+        assert_eq!(c.dither, Dither::FloydSteinberg);
+        assert!(
+            Config::load(&{
+                let p = dir.path().join("bad.toml");
+                fs::write(&p, "palette = \"pvm\"\n").unwrap();
+                p
+            })
+            .is_err()
+        );
+        let c2 = Config {
+            palette: PaletteMode::Vga,
+            dither: Dither::Atkinson,
+            ..Default::default()
+        };
+        c2.save(&path).unwrap();
+        let txt = fs::read_to_string(&path).unwrap();
+        assert!(txt.contains("palette = \"vga\""), "{txt}");
+        assert!(txt.contains("dither = \"atkinson\""), "{txt}");
     }
 }

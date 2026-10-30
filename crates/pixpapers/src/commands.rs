@@ -260,6 +260,9 @@ fn merge_settings(base: &Settings, over: &Settings) -> Settings {
         placement: over.placement.or(base.placement),
         bg_color: over.bg_color.or(base.bg_color),
         gutter_px: over.gutter_px.or(base.gutter_px),
+        // palette/dither (v0.2 knobs) inherit from base; no CLI overrides
+        // for them yet — S2 wires those into `over`.
+        ..base.clone()
     }
 }
 

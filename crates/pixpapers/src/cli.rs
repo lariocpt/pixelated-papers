@@ -186,6 +186,7 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
                 placement,
                 bg_color: bg,
                 gutter_px: gutter,
+                ..Default::default()
             };
             commands::export(paths, cfg, &id, &overrides, (w, h), out.as_deref())?;
         }
