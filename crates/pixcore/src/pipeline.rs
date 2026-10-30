@@ -521,28 +521,64 @@ mod tests {
     #[test]
     fn quantize_output_is_inside_accepts_set() {
         for src in [testsrc::photo128x80(), testsrc::gradient64()] {
-            for m in PaletteMode::ALL {
-                let allow = m.accepts(&src);
-                for d in Dither::ALL {
-                    let out = quantize(&src, m, d);
-                    assert_eq!(out.dimensions(), src.dimensions(), "{m}/{d}");
-                    for (x, y, px) in out.enumerate_pixels() {
-                        let s = src.get_pixel(x, y).0;
-                        if s[3] <= 8 {
-                            assert_eq!(px.0, [0, 0, 0, 0], "{m}/{d} @({x},{y})");
+            check_accepts_subset(&src);
+        }
+    }
+
+    fn check_accepts_subset(src: &RgbaImage) {
+        for m in PaletteMode::ALL {
+            let allow = m.accepts(src);
+            for d in Dither::ALL {
+                let out = quantize(src, m, d);
+                assert_eq!(out.dimensions(), src.dimensions(), "{m}/{d}");
+                for (x, y, px) in out.enumerate_pixels() {
+                    let s = src.get_pixel(x, y).0;
+                    let allow = match &allow {
+                        None => {
+                            // Off is identity — every pixel passes through
+                            // unchanged, low-alpha ones included.
+                            assert_eq!(px.0, s, "{m}/{d} Off must not change");
                             continue;
                         }
-                        match &allow {
-                            None => assert_eq!(px.0, s, "{m}/{d} Off must not change"),
-                            Some(set) => assert!(
-                                set.contains(px),
-                                "{m}/{d}: output {:?} @({x},{y}) outside palette",
-                                px.0
-                            ),
-                        }
+                        Some(set) => set,
+                    };
+                    if s[3] <= 8 {
+                        assert_eq!(px.0, [0, 0, 0, 0], "{m}/{d} @({x},{y})");
+                        continue;
                     }
+                    assert!(
+                        allow.contains(px),
+                        "{m}/{d}: output {:?} @({x},{y}) outside palette",
+                        px.0
+                    );
                 }
             }
+        }
+    }
+
+    // Acceptance (PLAN-30 §A.4): output colors ⊆ chosen palette — over
+    // *arbitrary* pixel content (alpha incl.), all 8 modes × 6 dithers.
+    proptest! {
+        #[test]
+        fn quantize_subset_proptest_arbitrary_images(
+            w in 1u32..12,
+            h in 1u32..12,
+            seed in 0u64..u64::MAX,
+        ) {
+            // xorshift-generated RGBA noise; every channel and alpha byte
+            // reachable, tiny so the exhaustive 48-cell loop stays cheap.
+            let mut st = seed | 1;
+            let img = ImageBuffer::from_fn(w, h, |_, _| {
+                let mut px = [0u8; 4];
+                for b in px.iter_mut() {
+                    st ^= st << 13;
+                    st ^= st >> 7;
+                    st ^= st << 17;
+                    *b = (st % 256) as u8;
+                }
+                Rgba(px)
+            });
+            check_accepts_subset(&img);
         }
     }
 
