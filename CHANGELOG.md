@@ -59,3 +59,11 @@ normal`, default 16) on a wlr-layer-shell Background surface, niri-first.
   keys are v2 (v0.1 caches invalidate — they are disposable). `auto` +
   `none` renders **byte-identical to v0.1**, verified against goldens
   captured from the pre-change tree.
+- pixpapers CLI: per-wallpaper `palette <ID> <M>` / `dither <ID> <D>`
+  knobs and `default palette|dither` (entries keep `None` = inherit);
+  `list`/`status` show the new knobs. `export` gains `--palette`/`--dither`
+  render-only overrides: named modes write a palette PNG (PLTE = the
+  table deduped by first occurrence, a transparent placeholder at index
+  0, and the bg colour merged in when absent); `off`/`auto` stay RGBA.
+  First tests in the crate: CLI round-trips against a hermetic
+  `PIXPAPERS_HOME` plus an in-process daemon-socket harness.

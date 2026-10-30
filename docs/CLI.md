@@ -37,6 +37,8 @@ pixpapers -V | -h
 | `placement <ID> <PL>` | `fit cover-gutter cover-crop stretch` | See below. |
 | `bg <ID> <COLOR>` | `#rrggbb` | Letterbox / gutter color. |
 | `gutter <ID> <PX>` | `0..=4096` | Mat width for `cover-gutter` (px in output space). |
+| `palette <ID> <M>` | `off auto nes gb cga ega vga gen16` | Quantization look. `off` = plain RGBA; `auto` = per-image median-cut ≤ 256; `nes` = the 64-entry 2C02 master table (the canonical 192-byte `.pal`); `gb` = DMG four greens; `cga`/`ega`/`vga` = fixed tables; `gen16` = per-image 16, snapped onto the RGB555 grid. Vibe, not PPU emulation. |
+| `dither <ID> <D>` | `none fs atkinson bayer2 bayer4 bayer8` | Applied after palette mapping, in canvas space (deterministic, integer math). `none` = pure nearest (the v0.1 look); `fs` = Floyd–Steinberg; `atkinson` = Atkinson; `bayer2/4/8` = ordered screens. |
 
 ## Defaults
 
@@ -44,6 +46,8 @@ pixpapers -V | -h
 |---|---|
 | `default pixel <P>` | Default preset for new entries and entries never set explicitly. |
 | `default placement <PL>` | Same for placement. |
+| `default palette <M>` | Same for the palette look. |
+| `default dither <D>` | Same for the dither. |
 
 Changing a default re-applies to any *unset* current wallpaper immediately.
 
@@ -52,7 +56,7 @@ Changing a default re-applies to any *unset* current wallpaper immediately.
 | Command | Meaning |
 |---|---|
 | `status [--json] [--bench]` | Daemon truth when running (pid, outputs with live render label `16/fit`, enabled policy); filesystem view otherwise. `--bench` adds self-timed switch/render latencies, variant-cache hit rate, RSS + fd count. |
-| `export <ID> <WxH> [--pixel P] [--placement PL] [--bg C] [--gutter N] [-o OUT]` | Offline render to PNG using the daemon's exact composite path — a preview that cannot lie. No daemon needed. |
+| `export <ID> <WxH> [--pixel P] [--placement PL] [--bg C] [--gutter N] [--palette M] [--dither D] [-o OUT]` | Offline render to PNG using the daemon's exact composite path — a preview that cannot lie. No daemon needed. `--palette`/`--dither` override this render only (never persisted). Named modes write a palette PNG (PLTE = the table deduped by first occurrence, a transparent placeholder at index 0, and the bg colour merged in when absent); `off`/`auto` stay plain RGBA. |
 | `optimize [--all]` | Re-run the storage optimizer (PNG re-encode / strip cruft) over the library; `--all` includes entries unchanged since import. |
 | `completions <bash|zsh|fish>` | Shell completion script to stdout. |
 
@@ -89,8 +93,13 @@ pixpapers daemon
 ```
 ~/.config/pixpapers/config.toml          defaults + policy (written atomically)
 ~/.local/share/pixpapers/library.json    manifest (versioned; atomic)
-~/.local/share/pixpapers/library/<id>/   original.* + variants/v1[-pal]-16-fit-g24-120x68.png …
+~/.local/share/pixpapers/library/<id>/   original.* + variants/v2-16-fit-g24-120x68-auto.png …
 ~/.local/state/pixpapers/sock            IPC (JSON-lines: Apply/Status/Quit)
 ~/.local/state/pixpapers/pid             pidfile
 ~/.local/state/pixpapers/log             auto-spawn log
 ```
+
+Variant keys are `v2-<pixel>-<placement>[-g<g>]-<W>x<H>-<Q>[-<D>].png`:
+`<Q>` is the palette token (always present — `-auto`, `-nes`, …) and
+`<D>` the dither token, present only when the dither isn't `none`. The
+`v2` prefix invalidates v0.1 caches (they are disposable).
