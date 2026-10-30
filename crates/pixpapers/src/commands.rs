@@ -5,7 +5,10 @@
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use pixcore::{Config, Entry, Library, Paths, Pixel, Placement, ResolvedSettings, Settings};
+use pixcore::{
+    Config, Dither, Entry, Library, PaletteMode, Paths, Pixel, Placement, ResolvedSettings,
+    Settings,
+};
 
 /// Exit-code classifier: user errors (bad id, bad value, undecodable file)
 /// exit 1; internal trouble exits 2.
@@ -179,6 +182,20 @@ pub fn set_default_placement(paths: &Paths, cfg: &mut Config, p: Placement) -> R
     cfg.default_placement = p;
     cfg.save(&paths.config_file).context("save config")?;
     println!("default placement: {p}");
+    Ok(())
+}
+
+pub fn set_default_palette(paths: &Paths, cfg: &mut Config, p: PaletteMode) -> Result<()> {
+    cfg.palette = p;
+    cfg.save(&paths.config_file).context("save config")?;
+    println!("default palette: {p}");
+    Ok(())
+}
+
+pub fn set_default_dither(paths: &Paths, cfg: &mut Config, p: Dither) -> Result<()> {
+    cfg.dither = p;
+    cfg.save(&paths.config_file).context("save config")?;
+    println!("default dither: {p}");
     Ok(())
 }
 
