@@ -76,6 +76,12 @@ enum Cmd {
         bg: Option<RgbCss>,
         #[arg(long)]
         gutter: Option<u32>,
+        /// Quantization look for this render only (not persisted)
+        #[arg(long)]
+        palette: Option<PaletteMode>,
+        /// Dither for this render only (not persisted)
+        #[arg(long)]
+        dither: Option<Dither>,
         #[arg(short, long)]
         out: Option<PathBuf>,
     },
@@ -204,6 +210,8 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
             placement,
             bg,
             gutter,
+            palette,
+            dither,
             out,
         } => {
             let (w, h) = parse_size(&size)?;
@@ -212,7 +220,8 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
                 placement,
                 bg_color: bg,
                 gutter_px: gutter,
-                ..Default::default()
+                palette,
+                dither,
             };
             commands::export(paths, cfg, &id, &overrides, (w, h), out.as_deref())?;
         }

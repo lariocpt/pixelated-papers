@@ -857,6 +857,7 @@ dependencies = [
  "log",
  "memmap2",
  "pixcore",
+ "png 0.17.16",
  "serde",
  "serde_json",
  "snapbox",
