@@ -7,7 +7,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
-use pixcore::{Config, Paths, Pixel, Placement, RgbCss, Settings};
+use pixcore::{Config, Dither, PaletteMode, Paths, Pixel, Placement, RgbCss, Settings};
 
 use crate::ipc::{self, Request};
 use crate::{commands, daemon, status};
@@ -41,6 +41,10 @@ enum Cmd {
     Bg { id: String, color: RgbCss },
     /// Set gutter width in px (cover-gutter) for one wallpaper
     Gutter { id: String, px: u32 },
+    /// Set the palette look for one wallpaper: off|auto|nes|gb|cga|ega|vga|gen16
+    Palette { id: String, palette: PaletteMode },
+    /// Set the dither for one wallpaper: none|fs|atkinson|bayer2|bayer4|bayer8
+    Dither { id: String, dither: Dither },
     /// Change defaults for new wallpapers / unset entries
     Default {
         #[command(subcommand)]
@@ -92,6 +96,8 @@ enum Cmd {
 enum DefaultWhat {
     Pixel { pixel: Pixel },
     Placement { placement: Placement },
+    Palette { palette: PaletteMode },
+    Dither { dither: Dither },
 }
 
 pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
@@ -137,6 +143,20 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
                 apply_now(paths);
             }
         }
+        Cmd::Palette { id, palette } => {
+            let (e, cur) = commands::edit_entry(paths, &id, |s| s.palette = Some(palette))?;
+            println!("{} → palette {palette}{}", e.id, changed_note(cur));
+            if cur {
+                apply_now(paths);
+            }
+        }
+        Cmd::Dither { id, dither } => {
+            let (e, cur) = commands::edit_entry(paths, &id, |s| s.dither = Some(dither))?;
+            println!("{} → dither {dither}{}", e.id, changed_note(cur));
+            if cur {
+                apply_now(paths);
+            }
+        }
         Cmd::Default { what } => {
             let mut cfg = cfg.clone();
             match what {
@@ -145,6 +165,12 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
                 }
                 DefaultWhat::Placement { placement } => {
                     commands::set_default_placement(paths, &mut cfg, placement)?
+                }
+                DefaultWhat::Palette { palette } => {
+                    commands::set_default_palette(paths, &mut cfg, palette)?
+                }
+                DefaultWhat::Dither { dither } => {
+                    commands::set_default_dither(paths, &mut cfg, dither)?
                 }
             }
             apply_now(paths);
