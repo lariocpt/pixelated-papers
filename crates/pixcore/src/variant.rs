@@ -382,7 +382,7 @@ mod tests {
     }
 
     /// Acceptance (PLAN-30 A.4): Auto + None is **byte-identical to v0.1**.
-    /// goldens/v01/ was captured from the untouched v0.1 tree (commit
+    /// tests/golden/v01/ was captured from the untouched v0.1 tree (commit
     /// 29ef2b4) via the public API on the same sources (pixel 8, Fit,
     /// 320×180); sha256 recorded in the wiring commit message.
     #[test]
@@ -401,7 +401,7 @@ mod tests {
                 let canvas = generate_from_image(&src, &s, (320, 180));
                 let bytes = encode_variant(&canvas, palette);
                 let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join(format!("goldens/v01/{name}-{tag}.png"));
+                    .join(format!("tests/golden/v01/{name}-{tag}.png"));
                 let want = std::fs::read(&golden).expect("v0.1 golden present");
                 assert_eq!(
                     bytes, want,

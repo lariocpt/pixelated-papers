@@ -635,7 +635,7 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // Golden cells: 12 palette × dither pairs on the photo source (PLAN-30
-    // §A.4). Exact PNG bytes, checked in under goldens/quantize/. Covers
+    // §A.4). Exact PNG bytes, checked in under tests/golden/quantize/. Covers
     // every PaletteMode and every Dither at least once:
     //   auto × {none,fs,atkinson,bayer2,bayer4,bayer8} +
     //   {nes,gb,cga,ega,vga,gen16} × none
@@ -675,7 +675,7 @@ mod tests {
             ("gen16__none", Gen16, Dither::None),
         ];
         let src = testsrc::photo128x80();
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("goldens/quantize");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/quantize");
         let regenerate = std::env::var_os("PIX_UPDATE_GOLDENS").is_some();
         if regenerate {
             std::fs::create_dir_all(&dir).unwrap();
