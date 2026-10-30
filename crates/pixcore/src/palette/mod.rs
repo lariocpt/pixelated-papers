@@ -7,10 +7,11 @@
 use std::fmt;
 use std::str::FromStr;
 
-use image::Rgba;
+use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{PixError, Result};
+use crate::pipeline;
 
 pub mod tables;
 
@@ -109,6 +110,37 @@ impl PaletteMode {
             _ => None,
         }
     }
+
+    /// The exact set of opaque colors a [`pipeline::quantize`] output may
+    /// contain for `img` (the acceptance contract; the fully-transparent
+    /// entry is additionally allowed for pixels that were transparent in
+    /// the input). `None` for `Off` — no constraint. Deterministic for a
+    /// given `img`.
+    pub fn accepts(self, img: &RgbaImage) -> Option<Vec<Rgba<u8>>> {
+        match self {
+            PaletteMode::Off => None,
+            PaletteMode::Auto => Some(pipeline::median_cut(img, 256)),
+            PaletteMode::Gen16 => Some(
+                pipeline::median_cut(img, 16)
+                    .into_iter()
+                    .map(snap_rgb555)
+                    .collect(),
+            ),
+            named => Some(
+                named
+                    .fixed_table()
+                    .expect("named mode has a table")
+                    .to_vec(),
+            ),
+        }
+    }
+}
+
+/// Should the variant PNG be written as a true palette PNG? True for every
+/// quantizing mode (named tables encode with exactly their entries); `Off`
+/// keeps the RGBA path. (`Auto`/`Gen16` derive a per-image table.)
+pub fn encode_as_palette_png(mode: PaletteMode) -> bool {
+    !matches!(mode, PaletteMode::Off)
 }
 
 impl Dither {
@@ -227,5 +259,13 @@ mod tests {
         assert_eq!(PaletteMode::Cga.fixed_table().unwrap().len(), 16);
         assert_eq!(PaletteMode::Ega.fixed_table().unwrap().len(), 64);
         assert_eq!(PaletteMode::Vga.fixed_table().unwrap().len(), 256);
+    }
+
+    #[test]
+    fn encode_predicate_follows_mode() {
+        assert!(!encode_as_palette_png(PaletteMode::Off));
+        for m in PaletteMode::ALL {
+            assert_eq!(encode_as_palette_png(m), m != PaletteMode::Off, "{m}");
+        }
     }
 }
