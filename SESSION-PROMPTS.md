@@ -718,7 +718,8 @@ installed waybar version and any scroll-key delta), and the live row status.
 ```
 Work in /home/lario/Projects/personal/pixelated-papers. You are executing step S9 of
 PLAN-30-ct.md — the v0.2 close-out. All of A–D (S1–S8) is merged; this step is
-docs-as-claims: every statement traceable to a script/output, no dead links.
+docs-as-claims: every statement traceable to a script/output, no dead links,
+plus exactly one pre-authorized code fix (task 7, the exit-code audit).
 Before starting, read, in order:
 
   AGENTS.md                  — "Docs are claims"
@@ -763,22 +764,51 @@ TASK — close the documentation loop:
    decision" list (update it: TUI/X11/palettes leave the deferred list;
    window/live/auto-preset stay — this file is convention, keep the edit to
    the list itself).
+7. Exit-code audit — the ONE authorized behavior change in this step
+   (pre-authorized here, bounded to is_user_error-classified paths).
+   AGENTS.md's contract: 1 = user error, 2 = internal. is_user_error
+   (commands.rs) recognizes only DaemonStartupError and non-Other PixError,
+   so any bare bail!/anyhow message exits 2. Known violation, found and
+   documented by S8: cycle on an empty library (the bail at commands.rs:154
+   — grep "bail!" to confirm it is the only bare one in the CLI surface).
+   Fix it:
+   - additive pixcore PixError variant (e.g. Empty(String)) whose #[error]
+     display is BYTE-IDENTICAL to today's message ("library empty — add one
+     with: pixpapers add <image>"); flag the pixcore touch in the commit
+     message the way S5 did. No other pixcore change.
+   - a test asserting cycle_current on an empty home errors with
+     is_user_error == true and the exact message unchanged; plus one
+     smoke.sh line: pixpapers cycle on an empty hermetic home exits 1.
+   - docs sync: amend the VERIFICATION.md S8 note (it currently records the
+     bug as not fixed — point it at this fix), a CHANGELOG [Unreleased] fix
+     bullet (exit 2 → 1), and any CLI.md wording the message change touches
+     (there should be none — the display must not change).
+   Then audit the rest of the CLI surface (set/remove/add/knobs/export/
+   status/bar) for user-condition errors that classify as exit 2 and fix
+   each the same way; if the audit finds nothing else, say so in the summary
+   and in VERIFICATION.md.
 
-FORBIDDEN: any behavior change. If a doc claim reveals a real bug in the
-shipped code, STOP and report — you do not fix behavior in the close-out.
+FORBIDDEN: any behavior change EXCEPT task 7 above (pre-authorized, bounded
+to is_user_error-classified error paths). Any OTHER bug a doc claim reveals:
+STOP and report — you do not fix it in the close-out.
 
 ACCEPTANCE:
 - Every new/changed doc statement traces to a script, a commit, or a
   VERIFICATION row; grep the diff for "TODO"/"fixme" you introduced (there
   should be none).
-- Cross-cutting gate green (docs-only, but run it — the smoke script reads
-  README claims in two places).
+- Exit-code audit: every user-condition path on the CLI surface exits 1;
+  the S8 VERIFICATION note amended to point at the fix; state what you
+  fixed vs "audit found nothing else" (whichever it is) in the receipt.
+- Cross-cutting gate green (run it even though it is mostly docs — the smoke
+  script reads README claims in two places, and task 7 adds to it).
 - Commits small per surface: "docs: README v0.2", "docs: COMPOSITORS x11",
   "docs: VERIFICATION v0.2 matrix", "docs: PLAN v0.2 + retro",
-  "chore: CHANGELOG v0.2", "docs: AGENTS deferred list".
+  "chore: CHANGELOG v0.2", "docs: AGENTS deferred list",
+  "fix: exit-code audit (user errors exit 1)".
 
 When done, print: the final README feature list, the VERIFICATION matrix as
-shipped (rows + skips), and any doc-vs-code mismatches you found (even if you
+shipped (rows + skips), the exit-code audit outcome (what was fixed vs
+nothing-else-found), and any doc-vs-code mismatches you found (even if you
 only reported them).
 ```
 
