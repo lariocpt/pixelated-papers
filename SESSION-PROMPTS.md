@@ -661,16 +661,17 @@ no new window, no new server, zero new Rust dependencies.
        "interval": 30,
        "on-click": "${TERMINAL:-foot} -e pixpapers tui",
        "on-scroll-up": "pixpapers cycle 1",
-       "on-scroll-down": "pixpapers cycle 1"
+       "on-scroll-down": "pixpapers cycle -1"
      }
    - VERIFY at implementation time against the INSTALLED waybar's module docs
      (waybar --version; check its exec-module keys for scroll — the plan
      already flagged that key names drift across versions): adjust the snippet
      to the installed version, and note any delta in the README below. The
-     scroll behavior is the plan's default: wheel cycles the wallpaper; if the
-     installed waybar can't do scroll on exec modules, drop those two keys and
-     say so in the README (the fallback is a documented keybind, not a
-     script).
+     scroll behavior is the plan's default: wheel cycles the wallpaper,
+     direction-aware (up advances, down goes back — the shipped cycle takes a
+     negative step and wraps); if the installed waybar can't do scroll on exec
+     modules, drop those two keys and say so in the README (the fallback is a
+     documented keybind, not a script).
    - on-click opens the TUI in $TERMINAL (documented fallback list: foot,
      then the user's own choice); waybar has no "spawn in my terminal" magic —
      the terminal is user-configured, never guessed beyond $TERMINAL.
