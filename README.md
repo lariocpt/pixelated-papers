@@ -1,8 +1,9 @@
 # pixelated-papers
 
-Forced-pixelation wallpapers for [niri](https://github.com/niri-wm/niri) and
-other Wayland compositors. Every wallpaper you set gets pixelated — there is
-no "off" switch you have to remember to click.
+Forced-pixelation wallpapers for [niri](https://github.com/niri-wm/niri),
+other Wayland compositors, and X11 (the root window). Every wallpaper you
+set gets pixelated — there is no "off" switch you have to remember to
+click.
 
 ![presets × placements](docs/screens/step8/grid-6x4.png)
 
@@ -60,7 +61,7 @@ niri 26.04, 3840×2160 at fractional scale 1.5, release build, dev machine:
 | cold `set` (spawn + generate + render + commit) | **91 ms** |
 | hot switch between cached wallpapers, n=50 | p50 **23 ms** · p95 **45 ms** |
 | variant on disk, 1080p photo @ 16 px (v2 default: auto, dither none) | **6.3 KB** vs 1.94 MB original (310×) — byte-identical to v0.1 |
-| variant on disk, 4K photo @ 16 px (same default path) | **22 KB** vs 7.8 MB (350×) |
+| variant on disk, 4K photo @ 16 px (same default path) | **22.3 KB** vs 7.80 MB (350×) |
 | named palettes vs auto, photo @ 16 | gb **−77%** · nes −45% · vga −18% — no palette bloats a variant |
 | dither cost on the preset canvases (fs / bayer8) | ≤ **+5.6 ms** one-time, cached |
 | idle daemon | **4.4 MB RSS · 5 fds** |
@@ -76,7 +77,8 @@ palette/dither rows come from `test/bench-sizes.sh` and
 
 - **Arch**: PKGBUILD draft in [`contrib/packaging/`](contrib/packaging).
 - **From source**: `cargo install --path crates/pixpapers` (stable toolchain ≥ 1.85).
-- Binary needs `WAYLAND_DISPLAY` to render; every other command works
+- Binary needs `WAYLAND_DISPLAY` (wayland) or `DISPLAY` (x11) to render —
+  auto-detect prefers wayland when both are set; every other command works
   headless.
 
 ## Documentation
@@ -89,7 +91,7 @@ palette/dither rows come from `test/bench-sizes.sh` and
 | [docs/PERF.md](docs/PERF.md) | the measured numbers and their honest reading |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | daemon won't start, nothing shows, exit 43 |
 | [docs/VERIFICATION.md](docs/VERIFICATION.md) | what was actually tested, and what wasn't |
-| [docs/PLAN.md](docs/PLAN.md) | design and the step-1→9 build log |
+| [docs/PLAN.md](docs/PLAN.md) | design; build log — v0.1 steps 1→9, then the v0.2 workstreams |
 
 ## Tested with
 
@@ -103,10 +105,39 @@ protocol and are expected to work, but are **untested** here. On hyprland,
 don't run `hyprpaper` at the same time — the background layer has no
 arbitration, last one wins.
 
-## Deliberately not in v0.1
+## Shipped in v0.2
 
-TUI, X11 support, live/animated wallpapers, auto-preset by image content,
-retro palettes and dithering, MPRIS-ish hooks, a hyprpaper-style backend.
+- **Retro palettes and dithering** — `auto / nes / gb / cga / ega / vga /
+  gen16` × `none / fs / atkinson / bayer2 / bayer4 / bayer8`, per wallpaper
+  (`pixpapers palette <id> <mode>`, `pixpapers dither <id> <mode>`).
+  Defaults are `auto` / `none`, so the default path is byte-identical to
+  v0.1. Knobs and goldens in [docs/CLI.md](docs/CLI.md).
+- **X11** — the daemon renders the root window when `DISPLAY` is set and
+  no Wayland compositor is visible; the exit-43 contract on compositor
+  loss is identical to wayland. Auto-detect order, the depth-24 contract
+  and the evidence in [docs/COMPOSITORS.md](docs/COMPOSITORS.md).
+- **TUI** — `pixpapers tui`: the library as a list with a sixel preview
+  where the terminal supports the kitty image protocol, a text fallback
+  elsewhere; add, set, remove and the preset/palette/dither cycles all
+  by key. Key table in [docs/CLI.md](docs/CLI.md).
+- **waybar module** — `pixpapers bar` plus the ready-made module snippet
+  in [`contrib/waybar/`](contrib/waybar/): click opens the TUI in a
+  terminal, the wheel cycles wallpapers (up = next, down = previous,
+  wrap-around), the label refreshes on every tick.
+
+## Deliberately not in v0.2
+
+- **GUI window** (native egui/`eframe` or a local web view): the waybar
+  button's `on-click` is the slot it flips into; a future window must keep
+  `commands::*` as the only state path and `status --json` the only read
+  face. The TUI is the GUI for now.
+- **Live/animated wallpapers** — one static look, done fast.
+- **Auto-preset by image content** — you pick the look; the tool doesn't
+  guess.
+- **MPRIS-ish hooks** — no media-stack integration.
+- **Exact fractional buffers** (viewporter/fractional-scale) — a separate
+  track; current buffer sizing covers everything the tested matrix uses.
+
 None of them are refused forever — they are out of scope for a tool whose
 job is one look, done fast.
 
