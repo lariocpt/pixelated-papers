@@ -133,3 +133,21 @@ normal`, default 16) on a wlr-layer-shell Background surface, niri-first.
   drives the full key table on a real pty against a scratch home
   (headless: no daemon spawn), then asserts the post-exit manifest and
   config truth — in [docs/VERIFICATION.md](docs/VERIFICATION.md) §S7.
+- **bar + waybar module** (PLAN-30-ct §D): `pixpapers bar` — one line,
+  always exit 0, for a toolbar: `▞ <title> · <pixel>/<placement-short>`
+  with a current entry (even with the daemon dead — config+manifest
+  truth through the daemon's own resolution chain, so the label never
+  shows a look the daemon would not render), `▞ pixpapers — set one`
+  with no entry and the daemon alive, `▞ pixpapers · daemon down` with
+  the socket dead. Pure formatting in pixcore; `Placement::short`
+  keeps the label narrow at toolbar heights; `cycle` takes a signed
+  step, so `on-scroll-down cycle -1` works. `contrib/waybar/` ships
+  the module for waybar ≥ 0.14 (tested 0.15.0: `custom/pixpapers`,
+  `exec "pixpapers bar"`, `interval 30`, `${TERMINAL:-foot} -e
+  pixpapers tui` on click, direction-aware wheel); `format` stays
+  `"{text}"` — the positional `"{ }"` idiom is rejected by fmt 12,
+  which the tested 0.15.0 links, and the module then silently hides.
+  No daemon changes, no new IPC, no new dependencies. 4 hermetic
+  goldens + offline `smoke.sh` checks; live row (render + flip real,
+  click/scroll named skips with exact-command substitutes) in
+  [docs/VERIFICATION.md](docs/VERIFICATION.md) §S8.
