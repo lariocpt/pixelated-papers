@@ -1,12 +1,18 @@
-# Verification record — step 8 matrix (feature-freeze gate)
+# Verification record — v0.1 step-8 matrix + the v0.2 workstreams (S1–S9)
 
-Every claim in README/PLAN checked against a real compositor. Recorded
-2026-10-24 on the dev machine, **niri 26.04 (8ed0da4)**, single output
-DP-1 (Samsung U28E590) at 3840×2160@59.997, niri **fractional scale 1.5**
-(logical 2560×1440, legacy `wl_output.scale` = 2 ⇒ our buffers 5120×2880).
-Release build. Scripts: `test/smoke.sh` (offline+live layers),
-`test/verify-live.sh` (V11/V13/V16/V17), `test/bench-daemon.sh` (V1/V2
-timings + footprint). Re-running any of them re-produces its rows.
+Every claim in README/PLAN checked against a real compositor. The v0.1
+matrix below was recorded 2026-10-24 on the dev machine, **niri 26.04
+(8ed0da4)**, single output DP-1 (Samsung U28E590) at 3840×2160@59.997,
+niri **fractional scale 1.5** (logical 2560×1440, legacy
+`wl_output.scale` = 2 ⇒ our buffers 5120×2880). Release build. Scripts:
+`test/smoke.sh` (offline+live layers), `test/verify-live.sh`
+(V11/V13/V16/V17), `test/bench-daemon.sh` (V1/V2 timings + footprint).
+Re-running any of them re-produces its rows.
+
+The v0.2 workstream sections follow the same rule (S1–S3.5 before the
+S4 re-run, S5 after it, S6–S9 at the end): every number names the
+script that produced it and the commit it was measured at, and a named
+skip says exactly what is missing and why.
 
 Legend: ✅ passed · ⚠️ passed with limitation · ⏸ manual/deferred · 🐞 bug found+fixed
 
@@ -55,6 +61,189 @@ should work — untested". v0.2: headless sway smoke in CI.
   machine-checked.
 - Fractional-scale exact buffers (V7): correct via legacy oversampled path.
 - 72 h soak (V15) pending a weekend.
+
+## S1 — palettes & dithering: model, quantize, cache key v2 (2026-10-31)
+
+PLAN-30-ct workstream A (`82dba3d` → `344f302`); pixcore tests 37 → 63
+across the step, gate green at each commit.
+
+**Model + tables** (`82dba3d`): PaletteMode {Off, Auto, Nes, Gb, Cga,
+Ega, Vga, Gen16} + Dither {None, FloydSteinberg, Atkinson, Bayer2,
+Bayer4, Bayer8} with lowercase serde tokens, Display/FromStr. Console
+tables with provenance pinned by unit tests: NES = the 64-entry 2C02
+master table — the canonical 192-byte `.pal` (a 192-entry NES table
+does not exist; the plan's "nes 192" was the `.pal` byte size, retro
+`f55170a`); GB DMG greens; CGA 16 (brown at 6, cross-pinned to VGA's
+first 16); EGA 64 (classic 4×4×4); VGA 256 (BIOS/Allegro default
+palette); gen16 = median-cut-16 snapped onto the RGB555 grid
+(`snap_rgb555`, applied in the quantize stage — not a table).
+
+**Quantize stage** (`4873099`): `pipeline::quantize(img, mode, dither)`
+— Off is identity; Auto = median-cut + nearest (the exact v0.1 call
+sequence when dither is None); Gen16 = median-cut-16 snapped to
+RGB555; named modes map onto their fixed tables. All diffusion is u16
+integer math (row-major, truncated weights) — no floats anywhere in a
+dither path (determinism contract). 12 golden cells — auto × all
+dithers + every named mode × none — under `tests/golden/quantize/`
+(regenerate deliberately via `PIX_UPDATE_GOLDENS=1`; a re-run verified
+byte-equal).
+
+**Config/manifest/resolve** (`22fd5d5`): `palette` (default `auto` =
+the v0.1 median-cut look) + `dither` (default `none` = the v0.1 look)
+knobs; legacy `palette = true/false` configs still load through the
+serde shim (true→auto, false→off; new saves write the string); old
+manifests without the fields parse unchanged.
+
+**Cache key v2** (`414c4d1`): variant paths now carry the look —
+`v2-{pixel}-{placement}[-g g]-{W}x<H>-{Q}[-{D}].png`, every (Q,D) cell
+its own file (proptest pins all 48 distinct). `PIPELINE_VERSION` 1→2:
+v0.1 caches invalidate, no migration code (the cache is disposable).
+The encode re-runs the exact v0.1 `median_cut(255)` + index-0-
+transparent scheme for Auto/Off, so those bytes are frozen; named
+modes encode exactly their table entries, deduplicated (NES's 12×
+black collapses — PLTE pinned by decoding the GB/NES variants).
+**v0.1 byte-identity guard**: four capture files taken from the
+untouched v0.1 tree (worktree at `29ef2b4`, public API only) —
+photo128x80/gradient64 × auto/off — compared byte-for-byte by
+`auto_none_matches_v01_bytes`.
+
+**Goldens checked in** (`309d970`): `crates/pixcore/goldens/` had been
+silently `.gitignore`d (the repo's image exception is
+`crates/**/tests/golden/**`); the 12 quantize cells + 4 v0.1 captures
+moved so `git ls-files` lists all 16.
+
+**Acceptance contract** (`344f302`): the A.4 palette-subset contract as
+a proptest — xorshift noise images (every RGBA byte reachable, alpha
+included) through all 8 modes × 6 dithers; output colors ⊆ the mode's
+acceptance set. (Off is identity, so its low-alpha pixels pass
+through untouched — only quantizing modes normalise alpha ≤ 8 to
+[0,0,0,0]; the assertion splits accordingly.) Docs wiring `2e089bf`
+(README mode list, CHANGELOG, AGENTS count).
+
+## S2 — CLI surface for the new knobs (2026-10-31)
+
+PLAN-30-ct workstream A.3–A.4 CLI half (`8c3560e` → `6e05665`).
+
+**Knob commands** (`8c3560e`): `pixpapers palette <id>
+<off|auto|nes|gb|cga|ega|vga|gen16>`, `pixpapers dither <id>
+<none|fs|atkinson|bayer2|bayer4|bayer8>` and `default palette|dither`
+— same behavior contract as the existing knobs: atomic write; Apply IPC
++ auto-spawn only when the edited entry is current; entries keep
+None = inherit the config default. No new IPC surface, no daemon
+change.
+
+**Export overrides** (`675b12c`): `--palette`/`--dither` as render-only
+overrides (never persisted) on the entry→overrides→config chain. Also
+fixes a v0.2-1 bug in the same function: the resolved palette was
+unconditionally clobbered with the config default, ignoring the
+entry's stored knob. Named modes write true palette PNGs (exact table,
+deduped by first occurrence, index-0 transparent placeholder, bg color
+merged when absent); off/auto stay plain RGBA, so the v0.1 default
+export shape is byte-identical.
+
+**list/status columns** (`25e4c81`): list gains palette/dither columns
+(same `*` inherit marker as pixel/placement); the status policy line
+ends with `· palette {p} · dither {d}` and `status --json` gains
+`default_palette`/`default_dither` (CLI-side merge — the daemon's
+StatusReport shape is untouched).
+
+**Variant label** (`6e05665`): the per-output label now carries the
+look — `{pixel}/{placement}-{Q}` (Q always) / `-{Q}-{D}` (D only when
+dither ≠ none) — display-only; grep-confirmed no script or harness
+parses it.
+
+**First tests in the pixpapers crate** (`f5e09a9`): 8 — the in-process
+`DaemonHarness` (throwaway socket listener recording every Request;
+S7's TUI tests reuse it) + subprocess round-trips against the built
+binary with `WAYLAND_DISPLAY` removed (headless-safe). They cover:
+every token round-trips with the edit line verbatim and the manifest
+bytes carrying the value; exactly one `Apply` — and it is last, after
+the `daemon_alive` Status probe — on a current-entry edit, zero on a
+non-current one; the VGA+fs export PLTE is exactly [placeholder
+000000] + first-occurrence dedup of the VGA table (247 entries) with
+sampled rows decoding to table colors; off/auto exports are plain
+RGBA. CLI.md updated in `411e944` (checked against `--help`).
+
+Gate: workspace tests green (63 pixcore + 8 pixpapers), clippy `-D
+warnings`, `fmt --check`, offline `smoke.sh`.
+
+## S3 — measured evidence: dither cost + palette sizes (2026-10-31)
+
+PLAN-30-ct workstream A.4 bench half (`89fd275` → `d335cd6`). Every
+number in the resulting PERF.md sections is the scripts' own verbatim
+output; the photo fixture is deterministic and mirrors
+`examples/variant_sizes.rs`, so the numbers line up with the existing
+tables.
+
+**Dither cost** (`89fd275` → `6d7d90d`): `test/bench-dither.sh` drives
+the test-only helper crate `test/bench-quantize/` (own workspace, not
+a member; release profile mirrors the root one, encoder versions
+pinned by its committed Cargo.lock) through `pipeline::quantize`
+timings: FS and bayer8 on the 120×68 / 240×135 / 480×270 preset
+canvases plus the one-time full-res 1920×1080 case. Result: ≤ +5.6 ms
+one-time on the preset canvases (then cached); the 1080p full-res
+budget row (vga+fs 0.61 s) sits inside the plan's 1 s line.
+
+**Palette sizes** (`45c9aa6` → `6d7d90d`): `test/bench-sizes.sh`
+measures variant bytes + blake3 for auto/named palettes on the 1080p/4K
+fixtures, then rebuilds the v0.1 auto baseline from a throwaway git
+worktree at `29ef2b4` (parent of the first S1 commit — the same base
+the byte-identity goldens came from) via a probe example dropped into
+the worktree, removed on exit. The join: v2 auto+none is
+byte-identical to v0.1 auto at fixture scale, not just on the goldens.
+Named-palette deltas vs auto: gb −77% … vga −18% — no palette bloats a
+variant (README size table, `92b3534`).
+
+**Walk-back** (`6d7d90d`): the plan's "normal" bullet is corrected —
+`normal` is palette-*encoded*, never quantized/dithered (the quantize
+stage never ran on it; PLAN-30 A.1 described the opposite — S3
+measures, does not change behavior). That gap becomes S3.5.
+
+CHANGELOG measured bullet `d335cd6`. Gate: workspace tests/clippy/
+fmt/offline smoke green.
+
+## S3.5 — `normal` honors palette/dither (2026-10-31)
+
+Settled rule (`0fc5d72` plan, `1318d60` code): for an identity pixel
+(`normal`), the plain-crop early return now applies **only to
+(Auto, None)** — the v0.1 default, whose bytes stay identical (encode
+still does its `median_cut(255)`, exactly as v0.1 did). Every other
+(palette, dither) combination runs the crop through the same
+`pipeline::quantize` stage the pixelated presets use, before the
+unchanged `encode_variant`: (Off, \*) is identity — dither has no
+palette to diffuse into, same crop bytes as v0.1 `palette = false`
+normal; (named, none) is full-canvas nearest (encode's re-map is
+idempotent on-table); (\*, dither≠none) is full-canvas quantize +
+diffusion/ordered dither. No new stages, no new encode logic,
+pixelated path untouched.
+
+**Tests** (`28da6dd`): `auto_none_matches_v01_bytes` extends the v0.1
+identity fixture from pixel 8 to the normal preset — 4 new goldens
+captured from the untouched v0.1 worktree at `29ef2b4` (Fit, 320×180,
+sha256-pinned in the commit); a proptest pins every named mode × every
+dither's output colors inside the table over arbitrary pixel content;
+dither changes bytes but stays in-palette (vga+fs ≠ vga+none, colors
+still in the VGA table); two-run determinism per new normal cell;
+end-to-end goldens for {auto-fs, vga-fs, nes-none, gen16-none} under
+`tests/golden/normal/`; the v2 key-shape check for normal. pixcore
+63 → 68 (AGENTS count).
+
+**Bench + PERF** (`4f58e63`): `test/bench-normal.sh` — 4K one-time
+full-canvas quantize medians: vga+none 2124 ms, vga+fs 2448 ms,
+auto+none 7311 ms, auto+fs 7405 ms (4× the pixels of S3's 1080p rows ⇒
+medians scale 4.0–4.1×). vga+fs 2.45 s and auto+fs 7.4 s are over the
+plan's 1 s line at 4K — documented with the number and kept (one-time,
+then cached; the risk row's call). Normal-variant PNG sizes
+(blake3-pinned): 1080p auto 247 350 B / vga 191 888 / nes 100 081; 4K
+auto 967 337 / vga 727 276 / nes 398 673.
+
+**Docs** (`694a248`): CLI.md rows (on `normal` the look runs on the
+full-size canvas, one-time then cached; auto+none the v0.1-identical
+default; dither inert with palette off), the PLAN A.4 bench line
+updated to the measured 3840×2160, CHANGELOG bullet.
+
+Gate (this tree): workspace 68 pixcore + 8 pixpapers, clippy `-D
+warnings`, `fmt --check`, offline `smoke.sh` — all green.
 
 ## Re-run after S4 (backend seam) — 2026-10-31
 
@@ -112,6 +301,68 @@ stable number and it is unchanged) · V13 all knobs + disable/enable live, no
 errors, no blanking · V16 **1000/1000** fuzzed IPC requests answered,
 manifest/config hashes unchanged · V17 SIGTERM → teardown + socket removal
 **100 ms** → `ok`.
+
+## S5 — X11 backend (2026-10-31)
+
+PLAN-30-ct §B (`85e59ed` → `1821986`). Policy first (`8b2891d`): S5
+**hard-stops** on a machine without xvfb — the honest named skip is for
+CI machines, not for this one; an unverified x11 backend is not a
+mergeable S5. This box got `xvfb` installed (user-approved) and the
+full suite ran.
+
+**Backend** (`85e59ed`): x11rb (pure-Rust XCB, pollable fd) as an
+optional feature `x11`, on by default; `--no-default-features` keeps a
+wayland-only slim build — measured delta 4,429,600 B default vs
+4,304,640 B slim = **+124,960 B (+2.9%)** (release, strip+lto). One
+wallpaper on every screen's root (mirrors the layer backend's
+multi-output behavior); full-root XRGB8888 client buffer in the
+display's byte order; composite via the *same* `composite_into` the
+layer backend uses (invariant #2); `PutImage` ZPixmap depth 24 in
+BigReq-aware row bands. Non-24-depth root ⇒ loud exit 1 at connect.
+Expose ⇒ re-render; RFPWM RESIZE ⇒ re-render at the new size (react
+only, never initiate, no RFPWM emission). Connection error ⇒
+`connection_lost` ⇒ exit 43 (same contract as wayland). Daemon start
+failures (no session, bad depth, refused connection) classify as user
+error exit 1 (`DaemonStartupError`; was 2 for the layer path). Status:
+bench counters moved behind the trait, `StatusReport` gains the
+additive `backend` field, `--backend` override. Verified by a manual
+xvfb round-trip at the backend commit (set → root pixmap AE=0 vs
+`export`, clean stop), then pinned by the script below.
+
+**Auto-detect** (`b549390`): `daemon.backend = auto|layer|x11`
+(default auto); auto order `WAYLAND_DISPLAY` ⇒ layer, else `DISPLAY` ⇒
+x11, else exit 1 naming both; a wrong explicit guess is a loud user
+error (exit 1), never a silent fallback chain; auto-spawn now also
+fires under `DISPLAY` alone. Headless unit tests: the `pick_auto` env
+matrix (WAYLAND_DISPLAY × DISPLAY truth table), backend-name parsing,
+the depth-24 gate (24 ok; 16/32 refused with the loud message).
+Boundary counts: pixcore 68 (S3.5) → 76 (S6 gate) and pixpapers 8 → 23
+— S4 adds no tests (seam only), so the growth is S5's.
+
+**Side fix** (`20e73ce`): S5 made `DISPLAY` sufficient for
+auto-spawn, but the offline layers only stripped `WAYLAND_DISPLAY` —
+on a host with a live X session that let test subprocesses auto-spawn
+real daemons bound to deleted temp homes (two such debug daemons were
+found running and killed with `pkill -x pixpapers`). `smoke.sh`
+`run()` and the harness `cli()` now strip both, restoring the
+documented promise: offline commands record but never spawn.
+
+Live rows:
+
+| Row | What ran | Result |
+|---|---|---|
+| xvfb suite (**real**) | `test/verify-x11.sh` — always self-wraps in `xvfb-run -a -s "-screen 0 1280x1024x24"` (never against an inherited `DISPLAY`: test 5 kills its X server); hermetic `PIXPAPERS_HOME`; honest named skip when xvfb-run/ImageMagick/xrandr/python-Xlib are absent | six assertions, all passing: `DISPLAY`-only start ⇒ backend `x11` (status --json); root pixmap byte-identical to the `export` oracle (AE=0) at 1280×1024; RFPWM resize hint (synthetic `_NET_WM_MOVERESIZE` ClientMessage via python-Xlib — Xorg does not broadcast one for `xrandr --fb` itself) ⇒ re-render at 1024×768, pixmap == oracle; `stop` removes socket+pid and leaves the X server up; X server killed ⇒ daemon **exit 43** (identical contract to wayland); depth-16 root ⇒ exit 1 with the loud depth message |
+| Live Xwayland session (**real**; added at S9 close-out, same day) | the harness shell's own `DISPLAY=:0` (Xwayland over the niri desktop — the root pixmap is not composited, so the desktop is unaffected); `WAYLAND_DISPLAY` unset for the probe; hermetic `PIXPAPERS_HOME`, foreground daemon, exact-PID cleanup in one shot (the AGENTS.md safe pattern) | auto-detect: `DISPLAY` only ⇒ backend `x11` (status --json); `set` applied against the live Xwayland root; `stop` clean — process gone, socket + pidfile removed, hermetic home deleted |
+
+Blit evidence: `test/bench-x11.sh` (`1821986`) — a fresh Xvfb per size,
+50 hot applies (two entries alternating, variant cache hot): wall
+p50/p95 **7/7 ms** @ 1080p, **22/24 ms** @ 4K; implied PutImage blit
+**~1 ms / ~8 ms** (switch − render). Full table + reading in PERF.md
+("X11 blit").
+
+Gate: workspace tests, clippy `-D warnings`, `fmt --check` and offline
+`smoke.sh` all green — the smoke run with both display vars present in
+the parent env is the `20e73ce` assertion.
 
 ## S6 — TUI core (2026-10-31)
 
@@ -249,12 +500,15 @@ rendered a 16-char label. `custom.cpp update()` is identical across
 0.13–0.15; only the distro's fmt differs. `"{text}"` is the form
 waybar documents and works across all three.
 
-Pre-existing, not changed here: `cycle` on an **empty** library exits
-2 (`error: library empty — add one with: pixpapers add <image>`, empty
-stdout). Harmless to the module: a binding's exit status cannot change
-the label — the text is supplied only by the module's own
-`exec`/`interval` re-run of `pixpapers bar`, which always prints one
-of the two no-entry lines.
+Pre-existing at S8, fixed in S9 (`dde4d1f`): `cycle` on an **empty**
+library exited 2 (`error: library empty — add one with: pixpapers add
+<image>`, empty stdout) — a user condition classified as internal, the
+AGENTS.md exit-code contract violation S8 found and S9's authorized
+task 7 fixed: it now exits **1**, message byte-identical. Harmless to
+the module either way: a binding's exit status cannot change the
+label — the text is supplied only by the module's own `exec`/`interval`
+re-run of `pixpapers bar`, which always prints one of the two no-entry
+lines.
 
 Gate (final tree): `cargo test --workspace` 83 pixcore + 58 pixpapers
 green · clippy `--workspace --all-targets -- -D warnings` green ·
@@ -263,3 +517,73 @@ exactly-one-line assertion). Release binary
 (`cargo build --release`, this tree): **4,755,048 B** vs the S7
 4,751,720 B — **+3,328 B (+3.2 KiB)** for the `bar` subcommand +
 `Placement::short`.
+
+## S9 — polish & docs close-out (2026-10-31)
+
+**Task 7 — exit-code audit** (pre-authorized in `6eeb424`, fixed in
+`dde4d1f`): audit the CLI surface for user conditions exiting 2
+(internal) instead of 1, and fix the classified ones. Every message
+stays byte-identical; only the classification changes.
+
+- **Fixed (2 → 1)**: `cycle` on an empty library — the only bare
+  `bail!` on the CLI surface (now `pixcore::PixError::Empty`, a new
+  variant + `empty()` constructor carrying the exact wording `list`
+  prints for the same condition); `set` / the six per-entry knob
+  commands (shared `edit_entry`) / `export` on an unknown id (bare
+  anyhow "no entry matching …" → `commands::UserError`); `export` with
+  an unparseable size (three `parse_size` messages → `UserError`).
+- **Already 1, unchanged**: `add` (hash/optimize/dir writes raise
+  `PixError`), `remove`, `Library` load/save, `status` (never errors),
+  `bar` (never errors), `stop` (always Ok), config load (`main`
+  hardcodes 1), daemon start failures (`DaemonStartupError` since
+  `85e59ed`).
+- **Reported, not fixed (outside the authorized scope)**: `export -o`
+  write failure keeps exit 2 (io trouble, not a user condition); clap
+  usage/parse errors exit 2 (framework convention, pre-routing); a
+  second **foreground** `daemon` while one runs exits 2 via a bare
+  `bail!` (`daemon/mod.rs prepare_socket`, bare since v0.1 `10dbc8b`) —
+  COMPOSITORS.md's "exits 1" claim for it was a doc bug, corrected in
+  the S9 docs pass. `pixcore` is touched by the `Empty` variant +
+  constructor only.
+
+Tests + smoke: unit — cycle on an empty home classifies as user error
+with the exact `list` wording; unknown ids on `set`/`edit_entry`/
+`export` and bad sizes classify as user error with the pre-audit
+messages (3 new tests); `smoke.sh` offline layer asserts the
+exit-1 wording on the emptied library before any spawn.
+
+**Fresh x11 re-run** (same day, debug binary):
+`test/verify-x11.sh target/debug/pixpapers` — all six §S5 assertions
+pass again (auto-detect, export-oracle AE=0, RFPWM re-render, clean
+stop, X-kill ⇒ exit 43, depth-16 ⇒ exit 1); the §S5 live Xwayland row
+was captured in the same session.
+
+**Docs close-out** — the audit surfaced four doc-vs-code mismatches,
+all corrected doc-side (no behavior change beyond task 7):
+
+1. COMPOSITORS.md (and TROUBLESHOOTING's flap section): the duplicate
+   foreground `daemon` "exits 1" — the code exits 2 (bare
+   `anyhow::bail!` since v0.1 `10dbc8b`; the audit deliberately kept
+   it at 2).
+2. CLI.md: claimed a docs-drift CI check and a generated man page
+   `contrib/pixpapers.1` — neither exists anywhere in the repo; both
+   claims removed (the clap definitions are the source of truth).
+3. CLI.md `remove` row: claimed removing the current entry is refused —
+   the code allows it and clears `current` (the §S7 row documents the
+   behavior; both backends then skip rendering, so the screen keeps
+   the last frame until the next `set`).
+4. CLI.md exit-code table: had io/decode/config under 2 and
+   remove-current under 1 — rewritten to the actual
+   `is_user_error` classifier (1 = every typed `PixError` except the
+   catch-all `Other` + `DaemonStartupError` + `UserError` +
+   config-load; 2 = `Other` encoder failures + bare anyhow + clap
+   usage; 43 = wayland or X server loss).
+
+Plus the S8 note above: the empty-library `cycle` it recorded as
+"exits 2 / not fixed" now exits 1 (`dde4d1f`).
+
+Gate (final tree): `cargo test --workspace` **83 pixcore + 61
+pixpapers** green (the +3 are the audit's new tests) · clippy
+`--workspace --all-targets -- -D warnings` green · `fmt --check`
+clean · `env -u WAYLAND_DISPLAY test/smoke.sh` green (including the
+new empty-cycle line).
