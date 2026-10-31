@@ -520,6 +520,10 @@ keys may exist as no-ops that print "(S7)" to the status bar):
      re-render on selection change / knob change / resize only — never on a
      timer; the variant cache gives cache hits for free when the preview size
      matches a real output size.
+    - normal-preset entries: the first preview at a given (pane size, look)
+      runs the full-canvas quantize (S3.5: up to ~7.4 s one-time on a 4K
+      original, then cached) — redraw the status bar ("rendering preview …")
+      BEFORE the blocking generation so the freeze reads as work, not a hang.
    - Size guard: refuse (fallback line instead) if the preview PNG would
      exceed 256 KB — boundary unit-tested.
 
