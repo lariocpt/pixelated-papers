@@ -13,7 +13,18 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use pixcore::ResolvedSettings;
 use pixcore::preview::preview_canvas;
 
-use super::App;
+use super::{App, ImageProto, PreviewState};
+
+/// Where the image goes: the pane area the preview PNG is scaled into
+/// (anchor = top-left cell, size in cells) and the canvas the generator
+/// must render at. Zero `cols`/`rows` = pane too small to display.
+#[derive(Clone, Copy, Default)]
+pub struct Geom {
+    pub anchor: (u16, u16),
+    pub cols: u16,
+    pub rows: u16,
+    pub canvas: (u32, u32),
+}
 
 /// The static key hint bar (C.2). `rm` is the two-key remove binding;
 /// S7 decides its exact wiring (see mod.rs key handling).
@@ -68,8 +79,8 @@ pub fn fallback_line(id: &str, canvas: (u32, u32)) -> String {
     )
 }
 
-/// Status bar segments (C.2): daemon probe, image-mode result (C3 adds
-/// the `img:` segment), last action result — one line, most recent wins.
+/// Status bar segments (C.2/C.3): daemon probe, image-mode detection
+/// result, last action result — one line, most recent wins.
 pub fn status_spans(app: &App) -> Vec<Span<'static>> {
     let daemon = if app.daemon_up {
         "daemon:up"
@@ -79,11 +90,13 @@ pub fn status_spans(app: &App) -> Vec<Span<'static>> {
     vec![
         Span::from(daemon.to_string()),
         Span::from(" · "),
+        Span::from(format!("img:{}", app.proto.token())),
+        Span::from(" · "),
         Span::from(app.last.clone()),
     ]
 }
 
-pub fn frame(f: &mut Frame, app: &App) {
+pub fn frame(f: &mut Frame, app: &App) -> Geom {
     let area = f.area();
     let [body, status, hints] = Layout::default()
         .direction(Direction::Vertical)
@@ -109,7 +122,7 @@ pub fn frame(f: &mut Frame, app: &App) {
         .areas(body);
 
     render_library(f, app, left);
-    render_preview(f, app, right);
+    render_preview(f, app, right)
 }
 
 fn render_library(f: &mut Frame, app: &App, area: Rect) {
@@ -153,35 +166,95 @@ fn render_library(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-fn render_preview(f: &mut Frame, app: &App, area: Rect) {
+/// The preview pane (C.2 + C.3). Returns where the image belongs.
+///
+/// Image mode (proto ≠ None, preview Ready): the caption block sits at
+/// the *bottom* of the pane and the image area is everything above it —
+/// the image is painted over the empty interior after the frame flush,
+/// so the caption is never covered. Fallback / refusal / error states
+/// keep the caption at the top and spend the pane on honest text.
+fn render_preview(f: &mut Frame, app: &App, area: Rect) -> Geom {
     let block = Block::default().borders(Borders::ALL).title(" preview ");
     let inner = block.inner(area);
     f.render_widget(block, area);
+    let mut geom = Geom::default();
 
     let Some(entry) = app.selected() else {
         f.render_widget(
             Paragraph::new("no entry selected").style(Style::default().add_modifier(Modifier::DIM)),
             inner,
         );
-        return;
+        return geom;
     };
 
-    let canvas = preview_canvas(inner.width as u32, inner.height as u32);
     let r = crate::commands::resolve_effective(entry, &app.cfg);
-    let mut lines: Vec<Line> = caption_lines(&r, canvas, app.cfg.enabled)
+    let caption_n = caption_lines(&r, (0, 0), app.cfg.enabled).len() as u16;
+
+    // The image area is the pane interior minus the bottom caption rows
+    // (+ one blank separator). The canvas follows from it exactly, so
+    // the generator and the renderer can never disagree.
+    let img_area = if inner.height > caption_n + 1 && inner.width > 0 {
+        Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height - caption_n - 1,
+        }
+    } else {
+        Rect::ZERO
+    };
+    geom.canvas = preview_canvas(img_area.width as u32, img_area.height as u32);
+    geom.anchor = (img_area.x, img_area.y);
+    geom.cols = img_area.width;
+    geom.rows = img_area.height;
+
+    let caption: Vec<Line> = caption_lines(&r, geom.canvas, app.cfg.enabled)
         .into_iter()
         .map(Line::from)
         .collect();
 
-    // Text fallback (C.3): caption + one honest line pointing at export.
-    // (The image-capable branch arrives with detection.) The line wraps —
-    // in fallback mode nothing else competes for the pane.
+    let show_image =
+        app.proto != ImageProto::None && matches!(app.preview, PreviewState::Ready { .. });
+    if show_image {
+        // caption pinned to the bottom; the interior stays empty for
+        // the image bytes that ride over it after the flush. No wrap:
+        // the box height must be exactly the line count (narrow panes
+        // truncate the caption rather than reflowing it under the image).
+        let h = caption_n.min(inner.height);
+        f.render_widget(
+            Paragraph::new(caption.clone()),
+            Rect {
+                x: inner.x,
+                y: inner.y + inner.height - h,
+                width: inner.width,
+                height: h,
+            },
+        );
+        return geom;
+    }
+
+    // Text states: caption at top, then one honest line about why.
+    let mut lines = caption;
     lines.push(Line::from(""));
-    lines.push(
-        Line::from(fallback_line(&entry.id, canvas))
-            .style(Style::default().add_modifier(Modifier::DIM)),
-    );
+    let note = match (&app.preview, app.proto) {
+        (_, ImageProto::None) => fallback_line(&entry.id, geom.canvas),
+        (PreviewState::Refused { kb }, _) => format!(
+            "preview too large ({kb} KB > {} KB) — {}",
+            pixcore::preview::PREVIEW_PNG_MAX_BYTES / 1024,
+            fallback_line(&entry.id, geom.canvas)
+        ),
+        (PreviewState::Failed(e), _) => format!(
+            "preview failed: {e} — {}",
+            fallback_line(&entry.id, geom.canvas)
+        ),
+        (PreviewState::Idle, _) => "rendering preview …".into(),
+        (PreviewState::Ready { .. }, _) => String::new(), // unreachable: show_image caught it
+    };
+    if !note.is_empty() {
+        lines.push(Line::from(note).style(Style::default().add_modifier(Modifier::DIM)));
+    }
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    geom
 }
 
 #[cfg(test)]

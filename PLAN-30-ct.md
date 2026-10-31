@@ -357,9 +357,9 @@ terminal image protocols**, and a text fallback when it does not.
 **Detection** (startup + env override; documented in CLI.md):
 | Terminal | Signal | Protocol |
 |---|---|---|
-| kitty | `KITTY_WINDOW_ID` / `TERM_PROGRAM = kitty` | OSC 6337 inline PNG |
+| kitty | `KITTY_WINDOW_ID` / `TERM_PROGRAM = kitty` | graphics APC `ESC_G … ESC \\\` inline PNG (`a=T,f=100`) — **S6 correction**: the original cell said "OSC 6337", which is folklore; kitty has used the APC `G` protocol since 0.4.0 and never OSC 6337 (verified against kitty sources v0.4.0 → master) |
 | iTerm2 | `ITERM_SESSION_ID` | OSC 1337 `File=inline=1` |
-| sixel-capable | `SIXEL` env or `$TERM` contains `sixel` | `ESC q … ESC \\` |
+| sixel-capable | `SIXEL` env or `$TERM` contains `sixel` | `ESC P q … ESC \\` (DCS — verified against libsixel 1.8.6) |
 | none | anything else | **text fallback** |
 
 - Override: `PIX_PAPERS_IMAGE = none|kitty|iterm2|sixel` (also lets the
@@ -377,7 +377,8 @@ terminal image protocols**, and a text fallback when it does not.
     `ResolvedSettings` (this is the *same* function export uses — the
     preview is literally a small export, not a reimplementation);
   - downscale to ≤ the pane at cell granularity (kitty: emit with
-    `resize=` to fit the pane exactly; sixel/iTerm2: pre-resize to pane
+    `c=`/`r=` cell-fit to scale-to-fit the pane exactly — S6: kitty has
+    no `resize=`; sixel/iTerm2: pre-resize to pane
     px to bound size);
   - throttle: re-render on selection change, on knob change, on resize —
     not on a timer; generation hits the variant cache when possible (a
