@@ -2,15 +2,19 @@
 
 ### `pixpapers status` says "not running" but I set a wallpaper
 
-`set` auto-spawns only when the spawning shell/autostart has
-`WAYLAND_DISPLAY` in its environment. Check:
+`set` auto-spawns only when the spawning shell/autostart has a display
+variable in its environment — `WAYLAND_DISPLAY` (wayland, wins the
+auto-detect) or `DISPLAY` (x11; since v0.2 `DISPLAY` alone is
+sufficient). With neither, the config is still written but nothing is
+applied (honest error note). Check:
 
 ```sh
 echo $WAYLAND_DISPLAY          # e.g. wayland-1 — systemd user services often DON'T have it
+echo $DISPLAY                  # e.g. :0 — an X/Xwayland session; auto-detect's second place
 pixpapers status
 ```
 
-If it's missing in your autostart context, either export it there
+If both are missing in your autostart context, either export one there
 (niri `spawn` inherits the session env and is fine) or start the daemon
 once from a session shell (`systemctl --user import-env WAYLAND_DISPLAY`
 can help user services — see contrib unit notes).
@@ -42,17 +46,25 @@ is always safe while no daemon runs.
 
 ### Exit code 43 in logs ("compositor lost")
 
-**Normal at logout / niri restart.** The daemon tears down its surfaces,
-socket and pidfile and exits 43 so supervisors can tell "session ended"
-from "crashed". It must NOT be restarted into a dead session: the contrib
-systemd unit sets `RestartPreventExitStatus=43`. Your next `set` in the
-next session respawns it.
+**Normal at logout / niri restart / X server death.** The daemon tears
+down its surfaces, socket and pidfile and exits 43 so supervisors can
+tell "session ended" from "crashed". On the wayland backend that is a
+compositor exit or niri restart (live exercise is the manual V12); on
+the x11 backend it is the X server itself dying (Xorg/Xvfb killed,
+display-manager bounce) — that path is machine-tested:
+`test/verify-x11.sh` kills the Xvfb out from under the daemon and
+asserts exit 43 (VERIFICATION §S5). It must NOT be restarted into a
+dead session: the contrib systemd unit sets
+`RestartPreventExitStatus=43`. Your next `set` in the next session
+respawns it.
 
 ### systemd unit flaps (start/stop/start…)
 
 You put `Restart=always` without `RestartPreventExitStatus=43`, or two
 autostart mechanisms race (niri `spawn` *and* the unit). Keep one —
-the unit — or accept the loser of the socket race exiting 1 (harmless).
+the unit — or accept the loser of the socket race exiting 2 (harmless;
+a duplicate start is an environment race, not a user condition — the
+S9 exit-code audit kept it at 2).
 On logout, `ExecStop` politely stops it; `StopExec` on session teardown
 is covered by the unit stopping with the user slice.
 
@@ -65,6 +77,20 @@ state: fix the file (it's TOML/JSON), or as a last resort
 `pixpapers default …` regenerates config; library manifest survives
 independently. Originals in the library dir are only ever replaced by
 `optimize`, never rewritten lossy.
+
+### The TUI preview shows a text line, not an image
+
+`image preview unsupported here — pixpapers export <id> WxH -o
+/tmp/prev.png` is the honest fallback, not a failure: your terminal
+does not speak an image protocol the TUI can use (kitty's graphics
+APC, iTerm2's inline file, or sixel — the status bar shows which one
+won as `img:`; a plain xterm-256color-class terminal gets `img:none`
+and this line). The caption block (size · look · colours) is still
+there, and the line itself is the workaround: `pixpapers export`
+writes the exact preview to a file any image viewer can open. If you
+believe your terminal should qualify, `PIX_PAPERS_IMAGE=kitty|iterm2|sixel`
+(or `none`) forces a protocol for testing — the detection table is in
+CLI.md.
 
 ### It looks soft/blurry on a fractional-scale display
 
