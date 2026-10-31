@@ -44,12 +44,12 @@ normal`, default 16) on a wlr-layer-shell Background surface, niri-first.
 - Multi-output & physical hotplug: structurally handled, hardware-untested.
 - Fractional scale renders via the legacy oversampled path (exact-size
   buffers via viewporter/fractional-scale — planned, still deferred;
-  see [Unreleased]).
+  see [docs/SCALING.md](docs/SCALING.md)).
 - `stop`/daemon must be re-run per session (exit 43 on session end is
   intentional).
 - 72 h soak (V15) pending.
 
-## [Unreleased]
+## [0.2.0] - 2026-11-01
 
 v0.2: retro palettes & dithering, an X11 backend, a terminal UI and a
 waybar toolbar module — the four PLAN-30-ct workstreams, landed as
