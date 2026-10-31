@@ -757,3 +757,861 @@ fn cycle_knob(app: &mut App, f: impl FnOnce(&pixcore::ResolvedSettings, &mut Set
     edit_knob(app, &entry, f);
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::harness::{DaemonHarness, Home};
+    use crate::ipc::Request;
+
+    /// A fresh hermetic home + app. Actions that Apply need
+    /// [`DaemonHarness`] started first — never rely on a real daemon.
+    fn app_for(home: &Home) -> App {
+        App::new(home.paths.clone(), pixcore::Config::default()).unwrap()
+    }
+
+    /// A home with the fixture + a second, distinct source (two entries).
+    fn two_entry_home() -> (Home, String, String) {
+        let home = Home::new();
+        let src = crate::harness::fixture();
+        let (code, out, err) = home.cli(&["add", src.to_str().unwrap(), "--title", "fixture"]);
+        assert_eq!(code, 0, "add fixture failed:\n{out}\n{err}");
+        let small = home.small_source();
+        let (code, out, err) = home.cli(&["add", small.to_str().unwrap(), "--title", "other"]);
+        assert_eq!(code, 0, "add small failed:\n{out}\n{err}");
+        let id0 = home.entry_id(0);
+        let id1 = home.entry_id(1);
+        (home, id0, id1)
+    }
+
+    fn type_str(app: &mut App, s: &str) {
+        for c in s.chars() {
+            let o = handle(app, KeyCode::Char(c), false);
+            assert!(
+                matches!(o, KeyOutcome::Handled),
+                "typing {c:?} left the loop"
+            );
+        }
+    }
+
+    fn key(app: &mut App, code: KeyCode) -> KeyOutcome {
+        handle(app, code, false)
+    }
+
+    fn manifest_entries(home: &Home) -> Vec<pixcore::Entry> {
+        // A home that never saved a manifest has no file at all (Library::load
+        // treats that as empty) — mirror that here.
+        let Ok(text) = std::fs::read_to_string(home.paths.manifest_file()) else {
+            return Vec::new();
+        };
+        let lib: pixcore::Library = serde_json::from_str(&text).unwrap();
+        lib.entries
+    }
+
+    /// The Apply requests the harness saw (Status probes from `state_line`
+    /// and `refresh_state` also land there — only Apply is a mutation).
+    fn applies(h: &DaemonHarness) -> usize {
+        h.requests()
+            .iter()
+            .filter(|r| matches!(r, Request::Apply))
+            .count()
+    }
+
+    // ── input line ──────────────────────────────────────────────────────
+
+    #[test]
+    fn input_q_cancels_but_does_not_quit() {
+        let home = Home::new();
+        let mut app = app_for(&home);
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('a')),
+            KeyOutcome::Handled
+        ));
+        type_str(&mut app, "/tmp/x");
+        // `q` while the line is up cancels it and stays in the loop.
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('q')),
+            KeyOutcome::Handled
+        ));
+        assert!(app.input.is_none());
+        assert_eq!(app.last, "input cancelled");
+        assert!(manifest_entries(&home).is_empty());
+    }
+
+    #[test]
+    fn input_esc_and_ctrl_c_cancel() {
+        let home = Home::new();
+        let mut app = app_for(&home);
+        key(&mut app, KeyCode::Char('b'));
+        type_str(&mut app, "#aabbcc");
+        assert!(matches!(key(&mut app, KeyCode::Esc), KeyOutcome::Handled));
+        assert!(app.input.is_none());
+        assert_eq!(app.last, "input cancelled");
+
+        key(&mut app, KeyCode::Char('g'));
+        type_str(&mut app, "40");
+        assert!(matches!(
+            handle(&mut app, KeyCode::Char('c'), true),
+            KeyOutcome::Handled
+        ));
+        assert!(app.input.is_none());
+        assert_eq!(app.last, "input cancelled");
+    }
+
+    #[test]
+    fn input_editing_moves_and_deletes() {
+        let home = Home::new();
+        let mut app = app_for(&home);
+        key(&mut app, KeyCode::Char('a'));
+        type_str(&mut app, "abcd");
+        let line = app.input.as_mut().unwrap();
+        assert_eq!((line.buf.as_str(), line.pos), ("abcd", 4));
+        // left, insert, end, home, backspace
+        key(&mut app, KeyCode::Left);
+        type_str(&mut app, "X"); // "abcXd", pos 4
+        key(&mut app, KeyCode::End);
+        key(&mut app, KeyCode::Home);
+        key(&mut app, KeyCode::Backspace); // at 0: no-op
+        key(&mut app, KeyCode::Right); // pos 1
+        key(&mut app, KeyCode::Backspace); // deletes 'a'
+        let (buf, pos) = (
+            app.input.as_ref().unwrap().buf.clone(),
+            app.input.as_ref().unwrap().pos,
+        );
+        assert_eq!((buf.as_str(), pos), ("bcXd", 0));
+        // Ctrl-Q is ignored (neither insert nor cancel).
+        assert!(matches!(
+            handle(&mut app, KeyCode::Char('q'), true),
+            KeyOutcome::Handled
+        ));
+        assert_eq!(app.input.as_ref().unwrap().buf, "bcXd");
+        // non-ASCII text inserts too (paste of a unicode path); the cursor
+        // is still at 0 after the failed Backspace, so "é" goes first
+        type_str(&mut app, "é");
+        let line = app.input.as_ref().unwrap();
+        assert_eq!((line.buf.as_str(), line.pos), ("ébcXd", 1));
+    }
+
+    // ── add by path ─────────────────────────────────────────────────────
+
+    #[test]
+    fn add_missing_path_is_a_status_error() {
+        let home = Home::new();
+        let mut app = app_for(&home);
+        key(&mut app, KeyCode::Char('a'));
+        type_str(&mut app, "/definitely/not/here.png");
+        assert!(matches!(key(&mut app, KeyCode::Enter), KeyOutcome::Handled));
+        assert!(app.input.is_none());
+        assert!(app.last.contains("no such file"), "{}", app.last);
+        assert!(manifest_entries(&home).is_empty());
+    }
+
+    #[test]
+    fn add_directory_is_a_status_error() {
+        let home = Home::new();
+        let mut app = app_for(&home);
+        key(&mut app, KeyCode::Char('a'));
+        // "/tmp" — a directory, and deliberately q-free: the input line
+        // cancels on `q` (spec), so typed paths here must never contain
+        // one (a random tempdir suffix would make this test flaky).
+        type_str(&mut app, "/tmp");
+        assert!(matches!(key(&mut app, KeyCode::Enter), KeyOutcome::Handled));
+        assert_eq!(app.last, "not a file — pick a single image");
+        assert!(manifest_entries(&home).is_empty());
+    }
+
+    #[test]
+    fn add_bad_extension_is_a_status_error() {
+        let home = Home::new();
+        // fixed q-free path (the input line cancels on `q` — see the
+        // note in add_directory_is_a_status_error)
+        let dir = std::env::temp_dir().join("pixpapers-badext-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let txt = dir.join("notes.txt");
+        std::fs::write(&txt, "not an image").unwrap();
+        let mut app = app_for(&home);
+        key(&mut app, KeyCode::Char('a'));
+        type_str(&mut app, &txt.to_string_lossy());
+        assert!(matches!(key(&mut app, KeyCode::Enter), KeyOutcome::Handled));
+        assert!(app.last.contains("no image extension"), "{}", app.last);
+        assert!(manifest_entries(&home).is_empty());
+    }
+
+    #[test]
+    fn add_by_path_creates_the_entry() {
+        let home = Home::new();
+        let src = crate::harness::fixture();
+        let mut app = app_for(&home);
+        key(&mut app, KeyCode::Char('a'));
+        type_str(&mut app, &src.to_string_lossy());
+        assert!(matches!(key(&mut app, KeyCode::Enter), KeyOutcome::Handled));
+        assert!(app.input.is_none());
+
+        let entries = manifest_entries(&home);
+        assert_eq!(entries.len(), 1);
+        let e = &entries[0];
+        // the CLI's own `add` line, verbatim (W×H, optimize note and KB
+        // from the entry's data — not from captured stdout)
+        assert_eq!(
+            app.last,
+            format!(
+                "added {} · {} · {}×{} · {} · {:.0} KB",
+                e.id,
+                e.title,
+                e.width,
+                e.height,
+                e.optimize_note,
+                e.original_bytes as f64 / 1024.0
+            ),
+            "{}",
+            app.last
+        );
+        // selection moves to the new entry; `add` does not set current
+        assert_eq!(app.sel, 0);
+        assert_eq!(app.lib.current, None);
+    }
+
+    #[test]
+    fn add_dedupe_is_not_an_error() {
+        let home = Home::new();
+        let src = crate::harness::fixture();
+        let mut app = app_for(&home);
+        for _ in 0..2 {
+            key(&mut app, KeyCode::Char('a'));
+            type_str(&mut app, &src.to_string_lossy());
+            assert!(matches!(key(&mut app, KeyCode::Enter), KeyOutcome::Handled));
+        }
+        let entries = manifest_entries(&home);
+        assert_eq!(entries.len(), 1, "dedupe must keep one entry");
+        // the CLI's own line, verbatim (the image is already in the library)
+        assert_eq!(
+            app.last,
+            format!(
+                "already in library: {} ({})",
+                entries[0].id, entries[0].title
+            ),
+            "{}",
+            app.last
+        );
+        assert_eq!(app.sel, 0);
+    }
+
+    /// Add-by-path is byte- and hash-identical to CLI `add`: same id/hash,
+    /// same manifest row (modulo the added_unix timestamp) and the stored
+    /// original file is byte-identical (deterministic re-encode).
+    #[test]
+    fn add_by_path_matches_cli_add() {
+        let cli_home = Home::new();
+        let tui_home = Home::new();
+        let src = crate::harness::fixture();
+
+        let (code, out, err) = cli_home.cli(&["add", src.to_str().unwrap(), "--title", "fixture"]);
+        assert_eq!(code, 0, "cli add failed:\n{out}\n{err}");
+        let cli_e = manifest_entries(&cli_home).pop().unwrap().clone();
+
+        let mut app = app_for(&tui_home);
+        key(&mut app, KeyCode::Char('a'));
+        type_str(&mut app, &src.to_string_lossy());
+        assert!(matches!(key(&mut app, KeyCode::Enter), KeyOutcome::Handled));
+        let tui_e = manifest_entries(&tui_home).pop().unwrap();
+
+        assert_eq!(tui_e.id, cli_e.id);
+        assert_eq!(tui_e.hash, cli_e.hash);
+        assert_eq!(tui_e.title, cli_e.title);
+        assert_eq!(tui_e.ext, cli_e.ext);
+        assert_eq!(tui_e.width, cli_e.width);
+        assert_eq!(tui_e.height, cli_e.height);
+        assert_eq!(tui_e.original_bytes, cli_e.original_bytes);
+        assert_eq!(tui_e.optimize_note, cli_e.optimize_note);
+        assert_eq!(tui_e.settings, cli_e.settings);
+        // added_unix is a wall-clock stamp — allowed to differ
+
+        let read_orig = |h: &Home, id: &str, ext: &str| {
+            std::fs::read(h.paths.entry_dir(id).join(format!("original.{ext}"))).unwrap()
+        };
+        assert_eq!(
+            read_orig(&tui_home, &tui_e.id, &tui_e.ext),
+            read_orig(&cli_home, &cli_e.id, &cli_e.ext)
+        );
+    }
+
+    // ── set / cycle (Apply via the throwaway listener) ──────────────────
+
+    #[test]
+    fn set_current_applies_and_moves_selection() {
+        let (home, id0, id1) = two_entry_home();
+        crate::commands::set_current(&home.paths, &id0).unwrap();
+        let harness = DaemonHarness::start(&home.paths);
+        let mut app = app_for(&home);
+        app.sel = 1;
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('s')),
+            KeyOutcome::Handled
+        ));
+        let text = home.manifest_text();
+        let lib: pixcore::Library = serde_json::from_str(&text).unwrap();
+        assert_eq!(lib.current.as_deref(), Some(id1.as_str()));
+        assert_eq!(app.sel, 1);
+        // state_line sees the (harness) daemon: "applied"
+        assert_eq!(
+            app.last,
+            format!("set {} · other (applied)", id1),
+            "{}",
+            app.last
+        );
+        // exactly one Apply (Status probes from state_line/refresh also land)
+        assert_eq!(applies(&harness), 1, "{:?}", harness.requests());
+    }
+
+    /// Strip the display env for the test's duration so `ensure_running`
+    /// can never spawn (it would run *this test binary* with a libtest
+    /// name filter — the S7 fork-bomb). The original values are captured
+    /// and restored exactly on drop, so the guard leaks nothing into the
+    /// other (parallel) tests in this process.
+    struct HeadlessGuard {
+        display: Option<std::ffi::OsString>,
+        wayland: Option<std::ffi::OsString>,
+    }
+    impl HeadlessGuard {
+        fn new() -> Self {
+            let display = std::env::var_os("DISPLAY");
+            let wayland = std::env::var_os("WAYLAND_DISPLAY");
+            unsafe {
+                std::env::remove_var("DISPLAY");
+                std::env::remove_var("WAYLAND_DISPLAY");
+            }
+            Self { display, wayland }
+        }
+    }
+    impl Drop for HeadlessGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.display {
+                    Some(v) => std::env::set_var("DISPLAY", v),
+                    None => std::env::remove_var("DISPLAY"),
+                }
+                match &self.wayland {
+                    Some(v) => std::env::set_var("WAYLAND_DISPLAY", v),
+                    None => std::env::remove_var("WAYLAND_DISPLAY"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn set_with_no_listener_records_only() {
+        let _headless = HeadlessGuard::new();
+        let (home, id0, id1) = two_entry_home();
+        crate::commands::set_current(&home.paths, &id0).unwrap();
+        // no listener: the daemon is dead and cannot be spawned headlessly
+        let mut app = app_for(&home);
+        app.sel = 1;
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('s')),
+            KeyOutcome::Handled
+        ));
+        let lib: pixcore::Library = serde_json::from_str(&home.manifest_text()).unwrap();
+        assert_eq!(lib.current.as_deref(), Some(id1.as_str()));
+        assert_eq!(
+            app.last,
+            format!(
+                "set {} · other (recorded — will show when the daemon runs)",
+                id1
+            ),
+            "{}",
+            app.last
+        );
+    }
+
+    #[test]
+    fn cycle_rotates_and_applies() {
+        let (home, id0, id1) = two_entry_home();
+        crate::commands::set_current(&home.paths, &id0).unwrap();
+        let harness = DaemonHarness::start(&home.paths);
+        let mut app = app_for(&home);
+        assert!(app.sel == 0);
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('c')),
+            KeyOutcome::Handled
+        ));
+        let lib: pixcore::Library = serde_json::from_str(&home.manifest_text()).unwrap();
+        assert_eq!(lib.current.as_deref(), Some(id1.as_str()));
+        assert_eq!(app.sel, 1, "selection follows the rotated entry");
+        assert!(
+            app.last.starts_with(&format!("cycle → {id1} · ")),
+            "{}",
+            app.last
+        );
+        assert_eq!(applies(&harness), 1, "{:?}", harness.requests());
+        // and back around the ring
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('c')),
+            KeyOutcome::Handled
+        ));
+        let lib: pixcore::Library = serde_json::from_str(&home.manifest_text()).unwrap();
+        assert_eq!(lib.current.as_deref(), Some(id0.as_str()));
+        assert_eq!(applies(&harness), 2, "each cycle Applies once");
+    }
+
+    #[test]
+    fn cycle_on_empty_library_is_a_note() {
+        let home = Home::new();
+        let mut app = app_for(&home);
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('c')),
+            KeyOutcome::Handled
+        ));
+        assert_eq!(app.last, "library empty — add one first");
+    }
+
+    // ── knob cycles (Apply only when the edited entry is current) ───────
+
+    fn assert_manifest_knob(home: &Home, key_name: &str, want: &str) {
+        let m = home.manifest_text();
+        assert!(
+            m.contains(&format!("{key_name}\": \"{want}\"")),
+            "manifest does not store {key_name} {want}:\n{m}"
+        );
+    }
+
+    #[test]
+    fn pixel_cycle_on_current_applies() {
+        let (home, id0, _) = two_entry_home();
+        crate::commands::set_current(&home.paths, &id0).unwrap();
+        let harness = DaemonHarness::start(&home.paths);
+        let mut app = app_for(&home);
+        // effective 16 (config default) → 32
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('p')),
+            KeyOutcome::Handled
+        ));
+        assert_manifest_knob(&home, "pixel", "32");
+        assert_eq!(app.last, format!("{id0} → pixel 32"), "{}", app.last);
+        assert_eq!(applies(&harness), 1, "{:?}", harness.requests());
+        // wraps: 32 → 64 → … → normal → 8
+        for want in ["64", "128", "normal", "8"] {
+            assert!(matches!(
+                key(&mut app, KeyCode::Char('p')),
+                KeyOutcome::Handled
+            ));
+            assert_manifest_knob(&home, "pixel", want);
+        }
+        assert_eq!(
+            applies(&harness),
+            5,
+            "every step on the current entry Applies"
+        );
+    }
+
+    #[test]
+    fn placement_cycle_on_current_applies() {
+        let (home, id0, _) = two_entry_home();
+        crate::commands::set_current(&home.paths, &id0).unwrap();
+        let harness = DaemonHarness::start(&home.paths);
+        let mut app = app_for(&home);
+        // fit → cover-gutter → cover-crop → stretch → fit
+        for want in ["cover-gutter", "cover-crop", "stretch", "fit"] {
+            assert!(matches!(
+                key(&mut app, KeyCode::Char('l')),
+                KeyOutcome::Handled
+            ));
+            assert_manifest_knob(&home, "placement", want);
+        }
+        assert_eq!(app.last, format!("{id0} → placement fit"), "{}", app.last);
+        assert_eq!(
+            applies(&harness),
+            4,
+            "every step on the current entry Applies"
+        );
+    }
+
+    #[test]
+    fn palette_cycle_on_current_applies() {
+        let (home, id0, _) = two_entry_home();
+        crate::commands::set_current(&home.paths, &id0).unwrap();
+        let harness = DaemonHarness::start(&home.paths);
+        let mut app = app_for(&home);
+        // auto → nes → … → gen16 → off → auto
+        for want in ["nes", "gb", "cga", "ega", "vga", "gen16", "off", "auto"] {
+            assert!(matches!(
+                key(&mut app, KeyCode::Char('t')),
+                KeyOutcome::Handled
+            ));
+            assert_manifest_knob(&home, "palette", want);
+        }
+        assert_eq!(app.last, format!("{id0} → palette auto"), "{}", app.last);
+        assert_eq!(
+            applies(&harness),
+            8,
+            "every step on the current entry Applies"
+        );
+    }
+
+    #[test]
+    fn dither_cycle_on_current_applies() {
+        let (home, id0, _) = two_entry_home();
+        crate::commands::set_current(&home.paths, &id0).unwrap();
+        let harness = DaemonHarness::start(&home.paths);
+        let mut app = app_for(&home);
+        // none → fs → … → bayer8 → none
+        for want in ["fs", "atkinson", "bayer2", "bayer4", "bayer8", "none"] {
+            assert!(matches!(
+                key(&mut app, KeyCode::Char('d')),
+                KeyOutcome::Handled
+            ));
+            assert_manifest_knob(&home, "dither", want);
+        }
+        assert_eq!(app.last, format!("{id0} → dither none"), "{}", app.last);
+        assert_eq!(
+            applies(&harness),
+            6,
+            "every step on the current entry Applies"
+        );
+    }
+
+    #[test]
+    fn knob_cycle_on_non_current_records_only() {
+        let (home, id0, id1) = two_entry_home();
+        crate::commands::set_current(&home.paths, &id0).unwrap();
+        let harness = DaemonHarness::start(&home.paths);
+        let mut app = app_for(&home);
+        app.sel = 1; // edit the OTHER entry
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('p')),
+            KeyOutcome::Handled
+        ));
+        assert_manifest_knob(&home, "pixel", "32");
+        assert_eq!(
+            app.last,
+            format!("{id1} → pixel 32 (not current — will apply on set)"),
+            "{}",
+            app.last
+        );
+        assert_eq!(
+            applies(&harness),
+            0,
+            "non-current edit must not Apply: {:?}",
+            harness.requests()
+        );
+    }
+
+    // ── bg / gutter input lines ─────────────────────────────────────────
+
+    #[test]
+    fn bg_input_on_current_applies() {
+        let (home, id0, _) = two_entry_home();
+        crate::commands::set_current(&home.paths, &id0).unwrap();
+        let harness = DaemonHarness::start(&home.paths);
+        let mut app = app_for(&home);
+        key(&mut app, KeyCode::Char('b'));
+        type_str(&mut app, "#123456");
+        assert!(matches!(key(&mut app, KeyCode::Enter), KeyOutcome::Handled));
+        assert_manifest_knob(&home, "bg_color", "#123456");
+        assert_eq!(app.last, format!("{id0} → bg #123456"), "{}", app.last);
+        assert_eq!(applies(&harness), 1, "{:?}", harness.requests());
+        // the short #rgb spelling expands to the same stored bytes
+        key(&mut app, KeyCode::Char('b'));
+        type_str(&mut app, "#abc");
+        assert!(matches!(key(&mut app, KeyCode::Enter), KeyOutcome::Handled));
+        assert_manifest_knob(&home, "bg_color", "#aabbcc");
+        assert_eq!(applies(&harness), 2);
+    }
+
+    #[test]
+    fn bg_input_bad_value_is_a_status_error() {
+        let (home, id0, _) = two_entry_home();
+        crate::commands::set_current(&home.paths, &id0).unwrap();
+        let harness = DaemonHarness::start(&home.paths);
+        let mut app = app_for(&home);
+        key(&mut app, KeyCode::Char('b'));
+        type_str(&mut app, "red");
+        assert!(matches!(key(&mut app, KeyCode::Enter), KeyOutcome::Handled));
+        assert!(app.last.starts_with("bg failed:"), "{}", app.last);
+        assert!(
+            home.manifest_text().contains("\"settings\": {}"),
+            "bad value must not be stored"
+        );
+        assert_eq!(applies(&harness), 0);
+    }
+
+    #[test]
+    fn gutter_input_on_current_applies() {
+        let (home, id0, _) = two_entry_home();
+        crate::commands::set_current(&home.paths, &id0).unwrap();
+        let harness = DaemonHarness::start(&home.paths);
+        let mut app = app_for(&home);
+        key(&mut app, KeyCode::Char('g'));
+        type_str(&mut app, "40");
+        assert!(matches!(key(&mut app, KeyCode::Enter), KeyOutcome::Handled));
+        // gutter_px is numeric in JSON, not a token string
+        assert!(
+            home.manifest_text().contains("\"gutter_px\": 40"),
+            "manifest does not store gutter_px 40:\n{}",
+            home.manifest_text()
+        );
+        assert_eq!(app.last, format!("{id0} → gutter 40px"), "{}", app.last);
+        assert_eq!(applies(&harness), 1, "{:?}", harness.requests());
+    }
+
+    #[test]
+    fn gutter_input_bad_value_is_a_status_error() {
+        let (home, _id0, _) = two_entry_home();
+        let mut app = app_for(&home);
+        key(&mut app, KeyCode::Char('g'));
+        type_str(&mut app, "forty");
+        assert!(matches!(key(&mut app, KeyCode::Enter), KeyOutcome::Handled));
+        assert!(app.last.contains("not a pixel count"), "{}", app.last);
+        assert!(home.manifest_text().contains("\"settings\": {}"));
+    }
+
+    // ── remove (confirm line) ───────────────────────────────────────────
+
+    #[test]
+    fn remove_confirmed_clears_dir_and_manifest() {
+        let (home, id0, _) = two_entry_home();
+        crate::commands::set_current(&home.paths, &id0).unwrap();
+        let harness = DaemonHarness::start(&home.paths);
+        let mut app = app_for(&home);
+        let dir = home.paths.entry_dir(&id0);
+        assert!(dir.exists());
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('D')),
+            KeyOutcome::Handled
+        ));
+        assert_eq!(app.confirm_remove.as_deref(), Some(id0.as_str()));
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('y')),
+            KeyOutcome::Handled
+        ));
+        assert!(app.confirm_remove.is_none());
+        assert_eq!(app.last, format!("removed {id0} (fixture)"), "{}", app.last);
+        assert!(!dir.exists(), "entry dir must be gone");
+        let lib: pixcore::Library = serde_json::from_str(&home.manifest_text()).unwrap();
+        assert!(lib.entries.iter().all(|e| e.id != id0));
+        assert_eq!(lib.current, None, "removing current clears current");
+        assert_eq!(applies(&harness), 1, "removing the current entry Applies");
+    }
+
+    #[test]
+    fn remove_cancelled_touches_nothing() {
+        let (home, id0, _) = two_entry_home();
+        let harness = DaemonHarness::start(&home.paths);
+        let mut app = app_for(&home);
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('D')),
+            KeyOutcome::Handled
+        ));
+        // anything but y/Y cancels — here `n`
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('n')),
+            KeyOutcome::Handled
+        ));
+        assert_eq!(app.last, "remove cancelled");
+        assert!(home.paths.entry_dir(&id0).exists());
+        assert_eq!(manifest_entries(&home).len(), 2);
+        assert_eq!(applies(&harness), 0);
+    }
+
+    #[test]
+    fn remove_non_current_entry_no_apply() {
+        let (home, id0, id1) = two_entry_home();
+        crate::commands::set_current(&home.paths, &id0).unwrap();
+        let harness = DaemonHarness::start(&home.paths);
+        let mut app = app_for(&home);
+        app.sel = 1;
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('D')),
+            KeyOutcome::Handled
+        ));
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('Y')),
+            KeyOutcome::Handled
+        ));
+        assert_eq!(app.last, format!("removed {id1} (other)"), "{}", app.last);
+        assert_eq!(manifest_entries(&home).len(), 1);
+        let lib: pixcore::Library = serde_json::from_str(&home.manifest_text()).unwrap();
+        assert_eq!(
+            lib.current.as_deref(),
+            Some(id0.as_str()),
+            "current survives"
+        );
+        assert_eq!(applies(&harness), 0, "no Apply for a non-current remove");
+    }
+
+    // ── enable / disable toggle ─────────────────────────────────────────
+
+    #[test]
+    fn toggle_enable_disable_applies() {
+        let home = Home::new();
+        let (code, out, err) = home.cli(&[
+            "add",
+            crate::harness::fixture().to_str().unwrap(),
+            "--title",
+            "f",
+        ]);
+        assert_eq!(code, 0, "add failed:\n{out}\n{err}");
+        let harness = DaemonHarness::start(&home.paths);
+        let mut app = app_for(&home);
+        assert!(app.cfg.enabled);
+        // off
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('e')),
+            KeyOutcome::Handled
+        ));
+        let cfg = pixcore::Config::load(&home.paths.config_file).unwrap();
+        assert!(!cfg.enabled);
+        assert!(!app.cfg.enabled, "app cfg stays in sync");
+        assert_eq!(
+            app.last,
+            "pixelation disabled — originals only (still stretched/placed)"
+        );
+        assert_eq!(applies(&harness), 1, "{:?}", harness.requests());
+        // and back on
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('e')),
+            KeyOutcome::Handled
+        ));
+        let cfg = pixcore::Config::load(&home.paths.config_file).unwrap();
+        assert!(cfg.enabled);
+        assert_eq!(app.last, "pixelation enabled");
+        assert_eq!(applies(&harness), 2);
+    }
+
+    // ── export ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn export_goes_to_the_download_dir() {
+        let home = Home::new();
+        let (code, out, err) = home.cli(&[
+            "add",
+            crate::harness::fixture().to_str().unwrap(),
+            "--title",
+            "f",
+        ]);
+        assert_eq!(code, 0, "add failed:\n{out}\n{err}");
+        let id = home.entry_id(0);
+        let dl = home.root.join("downloads");
+        unsafe { std::env::set_var("XDG_DOWNLOAD_DIR", &dl) };
+        let mut app = app_for(&home);
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('x')),
+            KeyOutcome::Handled
+        ));
+        unsafe { std::env::remove_var("XDG_DOWNLOAD_DIR") };
+        // canvas is (0,0) before any frame → the 1920×1080 fallback
+        let want = dl.join(format!("pixpapers-{id}-16-fit-1920x1080.png"));
+        assert!(want.is_file(), "missing {}: {}", want.display(), app.last);
+        assert!(
+            app.last.starts_with(&format!("wrote {}", want.display())),
+            "{}",
+            app.last
+        );
+        assert!(app.last.contains("16 fit"), "{}", app.last);
+        // export is not a mutation: no reload churn, nothing applied
+        assert_eq!(app.canvas, (0, 0));
+    }
+
+    // ── refresh ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn refresh_picks_up_external_changes() {
+        let home = Home::new();
+        let mut app = app_for(&home);
+        assert!(app.lib.entries.is_empty());
+        // a CLI add lands while the TUI has a stale (empty) view
+        let (code, out, err) = home.cli(&[
+            "add",
+            crate::harness::fixture().to_str().unwrap(),
+            "--title",
+            "f",
+        ]);
+        assert_eq!(code, 0, "add failed:\n{out}\n{err}");
+        let harness = DaemonHarness::start(&home.paths);
+        assert!(app.lib.entries.is_empty(), "still stale before r");
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('r')),
+            KeyOutcome::Handled
+        ));
+        assert_eq!(app.lib.entries.len(), 1);
+        assert_eq!(app.last, "refreshed");
+        assert!(app.daemon_up, "the harness listener reads as a live daemon");
+        let _ = harness.requests(); // the probe consumed its Status
+    }
+
+    // ── mid-apply safety ────────────────────────────────────────────────
+
+    /// The plan §8 row: with the (harness) daemon answering Applies
+    /// repeatedly, a full mutation sequence must leave the manifest
+    /// parseable and no `*.tmp` residue — pixcore's temp+rename writes.
+    #[test]
+    fn mid_apply_sequence_stays_consistent() {
+        let (home, id0, id1) = two_entry_home();
+        crate::commands::set_current(&home.paths, &id0).unwrap();
+        let harness = DaemonHarness::start(&home.paths);
+        let mut app = app_for(&home);
+
+        app.sel = 1;
+        key(&mut app, KeyCode::Char('s')); // set other
+        key(&mut app, KeyCode::Char('c')); // cycle back to fixture
+        key(&mut app, KeyCode::Char('p')); // pixel 16 → 32
+        key(&mut app, KeyCode::Char('d')); // dither none → fs
+        key(&mut app, KeyCode::Char('e')); // disable
+        key(&mut app, KeyCode::Char('e')); // enable
+        key(&mut app, KeyCode::Char('D'));
+        key(&mut app, KeyCode::Char('y')); // remove the current (fixture)
+
+        let text = home.manifest_text();
+        let lib: pixcore::Library = serde_json::from_str(&text)
+            .unwrap_or_else(|e| panic!("manifest unparseable after the sequence: {e}\n{text}"));
+        assert_eq!(lib.entries.len(), 1);
+        assert_eq!(lib.entries[0].id, id1);
+        assert_eq!(lib.current, None);
+        assert!(app.last.starts_with("removed "), "{}", app.last);
+
+        // no temp residue anywhere under the home
+        let mut tmp_files = Vec::new();
+        let mut stack = vec![home.root.clone()];
+        while let Some(dir) = stack.pop() {
+            for e in std::fs::read_dir(&dir).unwrap() {
+                let p = e.unwrap().path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().is_some_and(|x| x == "tmp") {
+                    tmp_files.push(p);
+                }
+            }
+        }
+        assert!(tmp_files.is_empty(), "temp residue: {tmp_files:?}");
+        let applies = harness
+            .requests()
+            .iter()
+            .filter(|r| matches!(r, Request::Apply))
+            .count();
+        assert!(applies >= 3, "expected several Applies, got {applies}");
+    }
+
+    // ── quit keys ───────────────────────────────────────────────────────
+
+    #[test]
+    fn quit_keys_leave_the_loop() {
+        let home = Home::new();
+        for (name, code) in [("q", KeyCode::Char('q')), ("esc", KeyCode::Esc)] {
+            let mut app = app_for(&home);
+            assert!(
+                matches!(key(&mut app, code), KeyOutcome::Quit),
+                "{name} must quit"
+            );
+        }
+        let mut app = app_for(&home);
+        assert!(
+            matches!(handle(&mut app, KeyCode::Char('c'), true), KeyOutcome::Quit),
+            "ctrl-c must quit"
+        );
+        // unknown keys are inert, not quits
+        let mut app = app_for(&home);
+        assert!(matches!(
+            key(&mut app, KeyCode::Char('z')),
+            KeyOutcome::Handled
+        ));
+        assert_eq!(app.last, "ready");
+    }
+}
