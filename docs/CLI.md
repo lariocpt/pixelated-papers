@@ -37,8 +37,8 @@ pixpapers -V | -h
 | `placement <ID> <PL>` | `fit cover-gutter cover-crop stretch` | See below. |
 | `bg <ID> <COLOR>` | `#rrggbb` | Letterbox / gutter color. |
 | `gutter <ID> <PX>` | `0..=4096` | Mat width for `cover-gutter` (px in output space). |
-| `palette <ID> <M>` | `off auto nes gb cga ega vga gen16` | Quantization look. `off` = plain RGBA; `auto` = per-image median-cut ≤ 256; `nes` = the 64-entry 2C02 master table (the canonical 192-byte `.pal`); `gb` = DMG four greens; `cga`/`ega`/`vga` = fixed tables; `gen16` = per-image 16, snapped onto the RGB555 grid. Vibe, not PPU emulation. |
-| `dither <ID> <D>` | `none fs atkinson bayer2 bayer4 bayer8` | Applied after palette mapping, in canvas space (deterministic, integer math). `none` = pure nearest (the v0.1 look); `fs` = Floyd–Steinberg; `atkinson` = Atkinson; `bayer2/4/8` = ordered screens. |
+| `palette <ID> <M>` | `off auto nes gb cga ega vga gen16` | Quantization look. `off` = plain RGBA; `auto` = per-image median-cut ≤ 256; `nes` = the 64-entry 2C02 master table (the canonical 192-byte `.pal`); `gb` = DMG four greens; `cga`/`ega`/`vga` = fixed tables; `gen16` = per-image 16, snapped onto the RGB555 grid. Vibe, not PPU emulation. On `normal` the look is applied to the **full-size canvas** (one-time, then cached like any variant); `auto` + `none` is the v0.1-identical default (plain crop, palette-encoded at encode). |
+| `dither <ID> <D>` | `none fs atkinson bayer2 bayer4 bayer8` | Applied after palette mapping, in canvas space (deterministic, integer math). `none` = pure nearest (the v0.1 look); `fs` = Floyd–Steinberg; `atkinson` = Atkinson; `bayer2/4/8` = ordered screens. On `normal` the dither runs over the full-size canvas (one-time, then cached); with palette `off` it is inert (no palette to diffuse into). |
 
 ## Defaults
 

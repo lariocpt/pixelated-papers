@@ -101,9 +101,15 @@ pub enum Dither { None, FloydSteinberg, Atkinson, Bayer2, Bayer4, Bayer8 }
     `(x & (n-1)), (y & (n-1))`
   - Dither operates in **canvas space** (block space for presets): a
     1080p@16 variant dithers a 120×68 image — this is where the retro look
-    lives, and it stays cheap. `normal` presets dither the full-size canvas
-    (photo → console without block pixelation); cost is one-time + cached,
-    measured in A.4.
+    lives, and it stays cheap. `normal` presets quantize/dither the
+    **full-size canvas** (photo → console without block pixelation); cost
+    is one-time + cached, measured in A.4. **S3.5 settled rule** (the
+    wiring gap S3's bench exposed): the plain-crop early return in
+    `generate_from_image` survives **only** for `(auto, none)` — the v0.1
+    default, byte-identical (encode still does its `median_cut(255)`);
+    every other (palette, dither) combination runs the existing quantize
+    stage on the full canvas before the unchanged encode. `off` + dither
+    is inert (a dither has no palette to diffuse into).
 - **Plumbing**:
   - `Settings` (manifest) gains `palette: Option<PaletteMode>`,
     `dither: Option<Dither>` (None = inherit), serde `skip_serializing_if`
@@ -127,6 +133,17 @@ pub enum Dither { None, FloydSteinberg, Atkinson, Bayer2, Bayer4, Bayer8 }
     snapped to RGB555
   - then dither, if not `None` (FS/Atkinson/Bayer on the nearest-mapped
     canvas)
+  - **`normal` preset** (S3.5 settled rule): no downscale — the canvas is
+    the dest crop. The same stage runs on that full-size canvas before the
+    unchanged encode, **except** `(auto, none)`, which keeps the plain-crop
+    early return: it is the v0.1 default and must stay byte-identical
+    (encode still does its `median_cut(255)`, exactly as v0.1). `(off, *)`
+    is identity (a dither has no palette to diffuse into → the same crop
+    bytes as v0.1's `palette = false`); `(named, none)` is full-canvas
+    nearest (encode's re-map is idempotent on colors already on the
+    table); every `dither ≠ none` is full-canvas quantize + diffusion /
+    ordered dither — the photo → console look. No new stages, no new
+    encode logic, no change to the pixelated path.
 - **Encode**: named/auto palettes keep the existing palette-PNG path
   (index-0-transparent convention); a named table encodes with *exactly*
   that table (fewer entries than 255 ⇒ ≤ current sizes); `Off` stays RGBA.
@@ -167,8 +184,9 @@ palette+dither.
 - Goldens: one pipeline golden per (palette × dither) cell on
   `testsrc::photo128x80` (12 cells — small, checked in).
 - Bench (`--release`, numbers → PERF.md with the script + commit): FS and
-  bayer8 on 120×68 and 240×135 canvases; `normal`+`vga`+`fs` on 1920×1080
-  (one-time); variant byte sizes vs v0.1 auto-palette on the 1080p/4K
+  bayer8 on 120×68 and 240×135 canvases; `normal` on 3840×2160 with
+  `vga`+`fs` and `auto`+`fs` (one-time — S3.5 measured 4K, not 1080p);
+  variant byte sizes vs v0.1 auto-palette on the 1080p/4K
   fixtures (1080p @16 ≈ 6 KB today — table updated with the new default
   path included). If a named palette blows any size budget (e.g. NES on a
   photo), the README size table says so with the number.

@@ -59,6 +59,19 @@ normal`, default 16) on a wlr-layer-shell Background surface, niri-first.
   keys are v2 (v0.1 caches invalidate — they are disposable). `auto` +
   `none` renders **byte-identical to v0.1**, verified against goldens
   captured from the pre-change tree.
+- pixcore: the `normal` preset now honors `palette`/`dither` (S3.5 — S3's
+  quantize stage never ran for identity pixels). Settled rule: the
+  plain-crop early return survives **only** for `auto` + `none` (the v0.1
+  default, byte-identical — encode still does its `median_cut(255)`);
+  every other (palette, dither) combination quantizes the **full-size
+  canvas** before the unchanged encode. `off` + dither is inert (no
+  palette to diffuse into); named + `none` is full-canvas nearest
+  (encode's re-map is idempotent). Measured (PLAN-30 S3.5,
+  `test/bench-normal.sh` @ `4f58e63`, numbers in
+  [docs/PERF.md](docs/PERF.md)): 4K one-time `vga`+`fs` 2.4 s /
+  `auto`+`fs` 7.4 s — over the plan's 1 s line, median-cut-dominated,
+  documented and kept; cached variant PNGs 1080p 98–242 KB / 4K
+  389–945 KB for `auto`/`vga`/`nes`.
 - pixpapers CLI: per-wallpaper `palette <ID> <M>` / `dither <ID> <D>`
   knobs and `default palette|dither` (entries keep `None` = inherit);
   `list`/`status` show the new knobs. `export` gains `--palette`/`--dither`
