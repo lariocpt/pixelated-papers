@@ -100,3 +100,17 @@ normal`, default 16) on a wlr-layer-shell Background surface, niri-first.
   documented and kept); named palettes land 16–78% *below* auto (none
   bloats); the v2 default path is byte-identical to v0.1 at fixture
   scale (blake3-pinned), not just on the goldens.
+- **TUI core** (PLAN-30 §C.1–C.3): `pixpapers tui` — library list +
+  offline preview + status bar, single-threaded crossterm loop, alternate
+  screen restored via a panic-safe `Drop` guard. The preview is literally
+  a small export: `pixcore::variant::render_offline` is now the one
+  render path shared by `export` and the TUI (export bytes proven
+  byte-identical across the refactor). Terminal image protocols detected
+  at startup (kitty graphics APC / iTerm2 OSC 1337 / sixel / none) with
+  `PIX_PAPERS_IMAGE` override; a pure sixel encoder lives in pixcore
+  (verified against libsixel 1.8.6); 256 KB inline-PNG guard refuses
+  with the reason. Action keys are honest `(S7)` no-ops until S7 wires
+  them. Ships behind the default-on `tui` feature (ratatui + crossterm,
+  +270 KiB release binary, measured). Test plane: 7 ratatui `TestBackend`
+  goldens at a pinned 100×30 + detection/emit/canvas unit tests; live
+  rows in [docs/VERIFICATION.md](docs/VERIFICATION.md).

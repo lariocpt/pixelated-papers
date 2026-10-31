@@ -60,6 +60,40 @@ Changing a default re-applies to any *unset* current wallpaper immediately.
 | `optimize [--all]` | Re-run the storage optimizer (PNG re-encode / strip cruft) over the library; `--all` includes entries unchanged since import. |
 | `completions <bash|zsh|fish>` | Shell completion script to stdout. |
 
+## TUI
+
+| Command | Meaning |
+|---|---|
+| `tui` | Interactive terminal front-end (PLAN-30 §C): library list left, **offline preview** right (the exact `export` render path — a preview that cannot lie), status bar `daemon:up/down · img:<proto> · last action`. Works with the daemon dead (the status bar says so). Ships behind the default-on `tui` cargo feature. |
+
+Keys: `↑/k` `↓/j` select · `r` re-read manifest + config and re-probe the
+daemon (no mutation, no IPC) · `Ctrl-L` repaint · `q` / `Esc` / `Ctrl-C`
+quit. The action keys (`a s c p l b g t d e x rm`) are listed in the hint
+bar but land in the next step; until then they honestly print `(S7)`.
+
+Preview: generated only when the terminal speaks an image protocol
+(table below); re-rendered on selection change, `r` refresh, or resize —
+never on a timer. The caption block (output size · pixel · placement /
+palette · dither / bg · gutter) is always visible, image or not. An
+encoded preview over **256 KB** is refused with the reason (keeps a
+25-column SSH terminal from exploding). Without an image protocol the
+pane shows one honest line instead: `image preview unsupported here —
+pixpapers export <id> WxH -o /tmp/prev.png`. No fake art.
+
+Image-protocol detection (startup only; result shown as `img:` in the
+status bar, never guessed silently):
+
+| Signal | Protocol |
+|---|---|
+| `KITTY_WINDOW_ID` / `TERM_PROGRAM = kitty` | kitty graphics APC `ESC_G … ESC \` (inline PNG, `a=T,f=100`) |
+| `ITERM_SESSION_ID` | iTerm2 inline: `OSC 1337;File=inline=1` |
+| `SIXEL` set / `$TERM` contains `sixel` | sixel: `ESC P q … ESC \` |
+| anything else | text fallback (`img:none`) |
+
+`PIX_PAPERS_IMAGE = none|kitty|iterm2|sixel` overrides detection — forces
+a protocol or the fallback (the test lever and the escape hatch for a
+false positive).
+
 ## Daemon (foreground)
 
 | Command | Meaning |
@@ -98,6 +132,7 @@ Backend selection (`daemon.backend` in config.toml, default `auto`):
 | `DISPLAY` | x11 session; used by auto-detect when `WAYLAND_DISPLAY` is unset |
 | `PIXPAPERS_HOME` | hermetic root replacing data+config+state (tests, portable setups): `<root>/{config.toml,data/,state/}` |
 | `PIXPAPERS_LOG` | daemon log filter (`error..trace`, default `info`) |
+| `PIX_PAPERS_IMAGE` | `tui` only: force the image protocol (`none\|kitty\|iterm2\|sixel`), overriding auto-detection |
 | `XDG_*`/`HOME` | standard placement (`~/.config/pixpapers/config.toml`, `~/.local/share/pixpapers`, `~/.local/state/pixpapers`) |
 
 ## Files
