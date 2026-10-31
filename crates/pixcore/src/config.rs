@@ -51,6 +51,22 @@ pub struct Optimize {
 pub struct DaemonConfig {
     /// Log level: error | warn | info | debug | trace.
     pub log: String,
+    /// Which display backend the daemon uses (§B.3). `auto` probes at
+    /// daemon start: WAYLAND_DISPLAY set ⇒ layer, else DISPLAY set ⇒ x11,
+    /// else a loud user error. A wrong explicit guess is also a loud
+    /// error — no silent fallback chain.
+    pub backend: BackendChoice,
+}
+
+/// Display backend selection (`daemon.backend`, §B.3). Pure config data;
+/// the daemon maps it onto the concrete backends.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BackendChoice {
+    #[default]
+    Auto,
+    Layer,
+    X11,
 }
 
 impl Default for Config {
@@ -81,7 +97,10 @@ impl Default for Optimize {
 
 impl Default for DaemonConfig {
     fn default() -> Self {
-        Self { log: "info".into() }
+        Self {
+            log: "info".into(),
+            backend: BackendChoice::default(),
+        }
     }
 }
 
@@ -217,5 +236,17 @@ mod tests {
         let txt = fs::read_to_string(&path).unwrap();
         assert!(txt.contains("palette = \"vga\""), "{txt}");
         assert!(txt.contains("dither = \"atkinson\""), "{txt}");
+    }
+
+    #[test]
+    fn daemon_backend_choice() {
+        // §B.3: old configs (no daemon.backend) parse to auto; explicit
+        // values parse; saves write the string form.
+        let cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(cfg.daemon.backend, BackendChoice::Auto);
+        let cfg: Config = toml::from_str("[daemon]\nbackend = \"x11\"\n").unwrap();
+        assert_eq!(cfg.daemon.backend, BackendChoice::X11);
+        let s = toml::to_string(&Config::default()).unwrap();
+        assert!(s.contains("backend = \"auto\""), "{s}");
     }
 }

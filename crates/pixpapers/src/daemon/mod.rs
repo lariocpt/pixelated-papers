@@ -140,13 +140,13 @@ unsafe extern "C" fn handle_shutdown(_sig: libc::c_int) {
     SHUTDOWN.store(false, std::sync::atomic::Ordering::SeqCst);
 }
 
-pub fn run_foreground(paths: Paths, backend: Option<&str>) -> Result<()> {
+pub fn run_foreground(paths: Paths, cfg: &Config, backend: Option<&str>) -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().filter_or("PIXPAPERS_LOG", "info"))
         .format_timestamp_secs()
         .init();
 
     // ── backend ───────────────────────────────────────────────────────
-    let mut backend = connect_backend(&paths, backend)?;
+    let mut backend = connect_backend(&paths, cfg, backend)?;
     log::info!("backend: {}", backend.name());
 
     // ── socket (single instance) ──────────────────────────────────────
@@ -234,15 +234,65 @@ pub fn run_foreground(paths: Paths, backend: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Build the requested backend. `None` keeps the v0.1 behavior (layer);
-/// §B.3's auto-detect/config selection lands on top of this seam.
-/// Every failure here is a user error (exit 1), never an internal one.
-fn connect_backend(paths: &Paths, backend: Option<&str>) -> Result<ActiveBackend> {
-    match backend {
-        None | Some("layer") => LayerBackend::connect_to_env(paths.clone())
+fn parse_backend(s: &str) -> std::result::Result<pixcore::BackendChoice, String> {
+    match s {
+        "auto" => Ok(pixcore::BackendChoice::Auto),
+        "layer" => Ok(pixcore::BackendChoice::Layer),
+        "x11" => Ok(pixcore::BackendChoice::X11),
+        other => Err(format!(
+            "unknown backend {other:?} (expected auto, layer or x11)"
+        )),
+    }
+}
+
+/// The §B.3 auto order, as a pure function so the truth table is unit
+/// tested without touching the environment: `WAYLAND_DISPLAY` set ⇒
+/// layer; else `DISPLAY` set ⇒ x11; else `None` (the caller raises the
+/// loud user error — a wrong guess is never a silent fallback chain).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Pick {
+    Layer,
+    X11,
+}
+
+fn pick_auto(has_wayland: bool, has_display: bool) -> Option<Pick> {
+    if has_wayland {
+        Some(Pick::Layer)
+    } else if has_display {
+        Some(Pick::X11)
+    } else {
+        None
+    }
+}
+
+/// Build the selected backend: `--backend` flag wins over the
+/// `daemon.backend` config, which wins over the auto probe. Every
+/// failure here is a user error (exit 1), never an internal one.
+fn connect_backend(paths: &Paths, cfg: &Config, cli: Option<&str>) -> Result<ActiveBackend> {
+    let want = match cli {
+        Some(s) => parse_backend(s).map_err(|msg| anyhow::Error::new(DaemonStartupError(msg)))?,
+        None => cfg.daemon.backend,
+    };
+    let pick = match want {
+        pixcore::BackendChoice::Layer => Pick::Layer,
+        pixcore::BackendChoice::X11 => Pick::X11,
+        pixcore::BackendChoice::Auto => pick_auto(
+            std::env::var_os("WAYLAND_DISPLAY").is_some(),
+            std::env::var_os("DISPLAY").is_some(),
+        )
+        .ok_or_else(|| {
+            anyhow::Error::new(DaemonStartupError(
+                "no wayland session (WAYLAND_DISPLAY?) and no x11 session (DISPLAY?) — set one, \
+                 or pick explicitly with `daemon --backend <layer|x11>`"
+                    .into(),
+            ))
+        })?,
+    };
+    match pick {
+        Pick::Layer => LayerBackend::connect_to_env(paths.clone())
             .map(|b| ActiveBackend::Layer(Box::new(b)))
             .map_err(|e| anyhow::Error::new(DaemonStartupError(e.to_string()))),
-        Some("x11") => {
+        Pick::X11 => {
             #[cfg(feature = "x11")]
             {
                 backend::x11::X11Backend::connect_to_env(paths.clone())
@@ -256,9 +306,6 @@ fn connect_backend(paths: &Paths, backend: Option<&str>) -> Result<ActiveBackend
                 )))
             }
         }
-        Some(other) => Err(anyhow::Error::new(DaemonStartupError(format!(
-            "unknown backend {other:?} (expected layer or x11)"
-        )))),
     }
 }
 
@@ -404,4 +451,28 @@ fn poll2(fd_a: RawFd, fd_b: RawFd, timeout: Duration) -> (bool, bool) {
         pfds[0].revents & libc::POLLIN != 0,
         pfds[1].revents & libc::POLLIN != 0,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Pick, parse_backend, pick_auto};
+
+    #[test]
+    fn auto_detect_env_matrix() {
+        // §B.3 truth table (WAYLAND_DISPLAY × DISPLAY): wayland wins when
+        // set; else x11 when DISPLAY is set; else no session (loud error).
+        assert_eq!(pick_auto(true, true), Some(Pick::Layer));
+        assert_eq!(pick_auto(true, false), Some(Pick::Layer));
+        assert_eq!(pick_auto(false, true), Some(Pick::X11));
+        assert_eq!(pick_auto(false, false), None);
+    }
+
+    #[test]
+    fn backend_names_parse() {
+        assert!(parse_backend("auto").is_ok());
+        assert!(parse_backend("layer").is_ok());
+        assert!(parse_backend("x11").is_ok());
+        assert!(parse_backend("wayland").is_err());
+        assert!(parse_backend("").is_err());
+    }
 }

@@ -24,7 +24,7 @@ pixpapers -V | -h
 
 | Command | Meaning |
 |---|---|
-| `set <ID>` | Make it the current wallpaper and apply now. **Auto-starts the daemon** when `WAYLAND_DISPLAY` is set; without a session the config is still written (honest error note). |
+| `set <ID>` | Make it the current wallpaper and apply now. **Auto-starts the daemon** when `WAYLAND_DISPLAY` or `DISPLAY` is set; without a session the config is still written (honest error note). |
 | `cycle [BY]` | Rotate the current pointer by N (default 1) through the library. |
 | `enable` / `disable` | Global pixelation policy. `disable` = render originals only (placement/bg still honored). No other way to escape pixelation except per-wallpaper `pixel normal`. |
 | `stop` | Ask the running daemon to quit (IPC `Quit`). Surfaces, socket and pidfile are removed. |
@@ -64,26 +64,38 @@ Changing a default re-applies to any *unset* current wallpaper immediately.
 
 | Command | Meaning |
 |---|---|
-| `daemon` | Run the daemon in the foreground. You rarely type this: `set`/`cycle`/knobs spawn it detached. Foreground use is for logs/debug (`PIXPAPERS_LOG=debug`). |
+| `daemon [--backend <auto\|layer\|x11>]` | Run the daemon in the foreground. You rarely type this: `set`/`cycle`/knobs spawn it detached. Foreground use is for logs/debug (`PIXPAPERS_LOG=debug`). `--backend` overrides the `daemon.backend` config for testing. |
 
 ```
 pixpapers daemon
+pixpapers daemon --backend x11   # force the X11 backend (testing)
 ```
+
+Backend selection (`daemon.backend` in config.toml, default `auto`):
+
+| Value | Behavior |
+|---|---|
+| `auto` | Probe at daemon start: `WAYLAND_DISPLAY` set ⇒ `layer`; else `DISPLAY` set ⇒ `x11`; else exit 1 naming both. A wrong guess is a loud user error — there is no silent fallback chain. |
+| `layer` | wlr-layer-shell Background surfaces (wayland compositors: niri & friends). |
+| `x11` | Root-window wallpaper via PutImage (XRGB8888, depth-24 roots; a non-24-depth root is a loud exit 1). One daemon renders the same wallpaper on every screen; reacts to Expose and RFPWM resize hints, never initiates a resize. |
+
+`status` reports the active backend (`backend` field / `daemon: running (pid N, backend x11)`).
 
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | success |
-| 1 | user error (bad id, bad value, missing file, remove-current) |
+| 1 | user error (bad id, bad value, missing file, remove-current, no display session, unsupported screen depth) |
 | 2 | internal error (io, decode, config corruption) |
-| 43 | **daemon only**: the compositor went away (session end / niri restart). Teardown ran; socket/pid removed. A supervisor should NOT restart the daemon on 43 — there is no session to draw on. |
+| 43 | **daemon only**: the display server went away (wayland compositor / niri restart / X server killed). Teardown ran; socket/pid removed. A supervisor should NOT restart the daemon on 43 — there is no session to draw on. |
 
 ## Environment
 
 | Var | Effect |
 |---|---|
-| `WAYLAND_DISPLAY` | required to spawn/render; absence = headless config-only mode for non-daemon commands |
+| `WAYLAND_DISPLAY` | wayland session; with `daemon.backend = auto` it wins over `DISPLAY`. Absence of both = headless config-only mode for non-daemon commands |
+| `DISPLAY` | x11 session; used by auto-detect when `WAYLAND_DISPLAY` is unset |
 | `PIXPAPERS_HOME` | hermetic root replacing data+config+state (tests, portable setups): `<root>/{config.toml,data/,state/}` |
 | `PIXPAPERS_LOG` | daemon log filter (`error..trace`, default `info`) |
 | `XDG_*`/`HOME` | standard placement (`~/.config/pixpapers/config.toml`, `~/.local/share/pixpapers`, `~/.local/state/pixpapers`) |

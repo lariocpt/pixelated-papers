@@ -19,6 +19,7 @@ pub mod render;
 pub mod variant;
 
 pub use color::RgbCss;
+pub use config::BackendChoice;
 pub use config::Config;
 pub use error::PixError;
 pub use manifest::{Entry, Library, Settings};

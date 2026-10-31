@@ -80,6 +80,18 @@ normal`, default 16) on a wlr-layer-shell Background surface, niri-first.
   0, and the bg colour merged in when absent); `off`/`auto` stay RGBA.
   First tests in the crate: CLI round-trips against a hermetic
   `PIXPAPERS_HOME` plus an in-process daemon-socket harness.
+- **X11 backend** (PLAN-30 §B.2/§B.3): the same daemon, same CLI, same
+  look on X11 — one wallpaper on every screen's root window, composited
+  through the identical `composite_into` path and PutImage'd (ZPixmap,
+  depth 24; no Xv, no GPU). Selection: `daemon.backend = "auto" | "layer"
+  | "x11"` (default `auto`: `WAYLAND_DISPLAY` set ⇒ layer, else `DISPLAY`
+  set ⇒ x11, else exit 1 naming both — a wrong explicit guess is a loud
+  user error, never a silent fallback), plus `daemon --backend <b>` for
+  testing. `status` reports the active backend (additive `backend`
+  field). A non-24-depth root is a loud exit 1. Daemon start failures
+  (no session, bad depth, refused connection) now exit 1 (user error)
+  instead of 2. Ships behind the default-on `x11` cargo feature
+  (`--no-default-features` = wayland-only slim build; +122 KiB binary).
 - Measured (PLAN-30 S3, numbers in [docs/PERF.md](docs/PERF.md), scripts
   `test/bench-dither.sh` / `test/bench-sizes.sh` @ `45c9aa6`): dithering
   in canvas space costs ≤ +5.6 ms one-time on the largest preset canvas

@@ -82,6 +82,11 @@ is the universal fallback.
 
 ## X11 — not supported (by design)
 
+> **TODO(S9):** superseded by v0.2 work — an `x11` backend now ships
+> (`daemon.backend = "x11"`, auto-detected from `DISPLAY`; PLAN-30 §B.2).
+> This section gets replaced by the real X11 write-up in S9; until then
+> treat it as v0.1 history.
+
 No X11 backend in v0.1. The escape hatch is the export command, which
 produces exactly what the daemon would draw:
 
