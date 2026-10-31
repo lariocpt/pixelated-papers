@@ -8,6 +8,8 @@ mod daemon;
 mod harness;
 mod ipc;
 mod status;
+#[cfg(feature = "tui")]
+mod tui;
 
 use std::process::ExitCode;
 

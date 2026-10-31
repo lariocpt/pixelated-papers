@@ -10,6 +10,8 @@ use clap_complete::Shell;
 use pixcore::{Config, Dither, PaletteMode, Paths, Pixel, Placement, RgbCss, Settings};
 
 use crate::ipc::{self, Request};
+#[cfg(feature = "tui")]
+use crate::tui;
 use crate::{commands, daemon, status};
 
 #[derive(Parser)]
@@ -98,6 +100,9 @@ enum Cmd {
     },
     /// Ask a running daemon to stop
     Stop,
+    /// Interactive terminal front-end (library browser + offline preview)
+    #[cfg(feature = "tui")]
+    Tui,
     /// Emit a shell completion script
     Completions { shell: Shell },
 }
@@ -238,6 +243,8 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
         }
         Cmd::Daemon { backend } => daemon::run_foreground(paths.clone(), cfg, backend.as_deref())?,
         Cmd::Stop => status::stop(paths)?,
+        #[cfg(feature = "tui")]
+        Cmd::Tui => tui::run(paths, cfg)?,
         Cmd::Completions { shell } => {
             let mut app = <Cli as clap::CommandFactory>::command();
             clap_complete::generate(shell, &mut app, "pixpapers", &mut std::io::stdout());

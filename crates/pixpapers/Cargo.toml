@@ -11,13 +11,20 @@ keywords = ["wayland", "niri", "wallpaper", "pixel-art", "layer-shell"]
 categories = ["command-line-utilities"]
 
 [features]
-default = ["x11"]
+default = ["x11", "tui"]
 # X11 root-window backend (x11rb). On by default: X11 is a supported target;
 # off for a wayland-only slim build.
 x11 = ["dep:x11rb"]
+# `pixpapers tui` (PLAN-30 §C). ratatui = layout/widgets only, crossterm =
+# raw mode/events/alternate screen. Both CPU-only; the TUI owns its own
+# single-threaded loop (no event-loop crate, no-tokio posture kept).
+# On by default; off for a slim build.
+tui = ["dep:ratatui", "dep:crossterm"]
 
 [dependencies]
 x11rb = { workspace = true, optional = true }
+ratatui = { workspace = true, optional = true }
+crossterm = { workspace = true, optional = true }
 pixcore = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
