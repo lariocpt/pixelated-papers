@@ -15,6 +15,7 @@ pub mod paths;
 pub mod pipeline;
 pub mod placement;
 pub mod preset;
+pub mod preview;
 pub mod render;
 pub mod variant;
 
