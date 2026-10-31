@@ -65,7 +65,8 @@ pixpapers` (the unit ships `ExecStop` doing the polite IPC stop).
 ## sway — untested here
 
 Same protocol. Expect identical behavior; if it misbehaves, open an issue
-with `sway -v` + `pixpapers status`. Headless sway smoke is v0.2 CI work.
+with `sway -v` + `pixpapers status`. Headless sway smoke is a deferred
+CI item (AGENTS.md list), not part of v0.2.
 
 ## hyprland — untested here
 
