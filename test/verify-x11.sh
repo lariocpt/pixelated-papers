@@ -2,7 +2,8 @@
 # PLAN-30 §B.4 — X11 backend verification under Xvfb (hermetic
 # PIXPAPERS_HOME). Asserts: DISPLAY-only start ⇒ backend x11; set ⇒
 # root pixmap byte-identical to the export oracle; RFPWM broadcast ⇒
-# re-render at the new size; stop ⇒ socket/pid gone, X server alive;
+# re-render at the new size; stop ⇒ socket/pid gone, X server alive,
+# root cleared to solid black (no stray wallpaper);
 # X server killed ⇒ daemon exits 43. Bonus: non-24-depth root ⇒ exit 1.
 #
 #     test/verify-x11.sh [bin]        # self-wraps in xvfb-run if DISPLAY unset
@@ -15,6 +16,10 @@ set -eu
 command -v xvfb-run >/dev/null 2>&1 || { echo "SKIP: xvfb-run not installed (pacman -S xorg-server-xvfb / apt install xvfb)"; exit 0; }
 command -v import >/dev/null 2>&1 || { echo "SKIP: import (ImageMagick) not installed — no root-capture oracle"; exit 0; }
 command -v compare >/dev/null 2>&1 || { echo "SKIP: compare (ImageMagick) not installed"; exit 0; }
+# IM7 renamed convert to magick (the bare name still works but warns);
+# prefer magick so the suite output stays clean.
+MAGICK=$(command -v magick || command -v convert) \
+    || { echo "SKIP: ImageMagick (magick/convert) not installed"; exit 0; }
 command -v xrandr >/dev/null 2>&1 || { echo "SKIP: xrandr not installed"; exit 0; }
 python3 -c 'import Xlib' 2>/dev/null || { echo "SKIP: python3-xlib not installed (RFPWM broadcaster)"; exit 0; }
 
@@ -113,6 +118,15 @@ sleep 0.3
 kill -0 "$DPID" 2>/dev/null && fail "daemon still running after stop"
 xrandr >/dev/null 2>&1 || fail "X server died with the daemon"
 say "stop: socket+pid removed, X server still up"
+# The daemon takes the wallpaper with it: stop clears every root to
+# solid black, so no stray frame survives on the X server. The root is
+# 1024x768 here (test 3 resized the fb).
+import -window root "$WORK/root-after-stop.png" 2>/dev/null || fail "root capture after stop failed"
+"$MAGICK" -size 1024x768 xc:black "$WORK/black-ref.png" || fail "black reference failed"
+ae=$(compare -metric AE "$WORK/root-after-stop.png" "$WORK/black-ref.png" null: 2>&1) || true
+ae=${ae%% *}
+[ "$ae" = "0" ] || fail "root not cleared to solid black after stop (AE=$ae)"
+say "stop: root cleared to solid black (AE=0) — no stray wallpaper left"
 
 # ── 5. killing the X server ⇒ daemon exits 43 ──────────────────────────
 run "$BIN" daemon >"$WORK/daemon2.log" 2>&1 &

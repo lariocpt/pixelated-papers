@@ -12,6 +12,10 @@
 //! Depth: the buffer is XRGB8888 on a depth-24 root. A non-24-depth root
 //! is a *user error* — loud exit 1 at connect, tested not hoped for
 //! (PLAN-30 §B.2 risk row).
+//!
+//! Teardown: `close` clears every root to solid black before disconnect —
+//! the daemon takes the wallpaper with it, so a stopped daemon (or the
+//! exit-43 path, best-effort) leaves no stray frame on the X server.
 
 use std::collections::VecDeque;
 use std::os::fd::{AsRawFd, RawFd};
@@ -21,6 +25,7 @@ use x11rb::connection::{Connection, RequestConnection};
 use x11rb::protocol::Event;
 use x11rb::protocol::xproto::{
     ChangeWindowAttributesAux, ConnectionExt as _, CreateGCAux, EventMask, ImageFormat, ImageOrder,
+    Rectangle,
 };
 use x11rb::rust_connection::RustConnection;
 
@@ -413,6 +418,34 @@ impl Backend for X11Backend {
     }
 
     fn close(&mut self) {
+        // The daemon takes the wallpaper with it: every root is cleared to
+        // solid black before we disconnect, so a stopped daemon leaves no
+        // stray frame on the X server. On the exit-43 path the server is
+        // already gone and these requests simply fail — best effort, never
+        // a teardown blocker.
+        for s in self.screens.iter() {
+            if let Ok(cid) = self.conn.generate_id() {
+                // The GC id is the one we hand to create_gc (0.14 hands
+                // back a cookie, like the connect path keeps).
+                if self
+                    .conn
+                    .create_gc(cid, s.root, &CreateGCAux::new().foreground(0))
+                    .is_ok()
+                {
+                    let _ = self.conn.poly_fill_rectangle(
+                        s.root,
+                        cid,
+                        &[Rectangle {
+                            x: 0,
+                            y: 0,
+                            width: s.w as u16,
+                            height: s.h as u16,
+                        }],
+                    );
+                    let _ = self.conn.free_gc(cid);
+                }
+            }
+        }
         // Free our GCs, flush and drain what the server still owes us
         // before the supervisor removes socket/pid.
         for s in self.screens.iter() {
