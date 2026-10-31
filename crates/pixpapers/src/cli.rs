@@ -263,14 +263,14 @@ fn parse_size(s: &str) -> Result<(u32, u32)> {
     let lower = s.to_ascii_lowercase();
     let (w, h) = lower
         .split_once('x')
-        .ok_or_else(|| anyhow::anyhow!("size must be <W>x<H>, e.g. 1920x1080"))?;
+        .ok_or_else(|| commands::UserError("size must be <W>x<H>, e.g. 1920x1080".into()))?;
     Ok((
         w.trim()
             .parse()
-            .map_err(|_| anyhow::anyhow!("bad width in {s:?}"))?,
+            .map_err(|_| commands::UserError(format!("bad width in {s:?}")))?,
         h.trim()
             .parse()
-            .map_err(|_| anyhow::anyhow!("bad height in {s:?}"))?,
+            .map_err(|_| commands::UserError(format!("bad height in {s:?}")))?,
     ))
 }
 
@@ -313,4 +313,25 @@ fn changed_note(was_current: bool) -> String {
         " (not current — will apply on set)"
     }
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    //! S9 task 7: unparseable sizes are user errors (exit 1, was 2).
+
+    use super::parse_size;
+    use crate::commands::is_user_error;
+
+    #[test]
+    fn bad_size_is_user_error() {
+        for bad in ["1920", "x1080", "1920x", "axb", "12x7x9"] {
+            let err = parse_size(bad).expect_err(&format!("{bad:?} must not parse"));
+            assert!(
+                is_user_error(&err),
+                "{bad:?} must classify as user error (exit 1)"
+            );
+        }
+        assert_eq!(parse_size("1920x1080").unwrap(), (1920, 1080));
+        assert_eq!(parse_size(" 1920 x 1080 ").unwrap(), (1920, 1080));
+    }
 }

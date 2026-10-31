@@ -4,11 +4,26 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use pixcore::{
     Config, Dither, Entry, Library, PaletteMode, Paths, Pixel, Placement, ResolvedSettings,
     Settings,
 };
+
+/// A user-condition error: a bad id, an empty library, an unparseable
+/// value — the user said something wrong, no internal work failed.
+/// User error, exit 1 (S9 task 7), the same classification rule
+/// [`crate::daemon::DaemonStartupError`] follows.
+#[derive(Debug)]
+pub struct UserError(pub String);
+
+impl std::fmt::Display for UserError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for UserError {}
 
 /// Exit-code classifier: user errors (bad id, bad value, undecodable file)
 /// exit 1; internal trouble exits 2.
@@ -18,6 +33,10 @@ pub fn is_user_error(e: &anyhow::Error) -> bool {
     if e.downcast_ref::<crate::daemon::DaemonStartupError>()
         .is_some()
     {
+        return true;
+    }
+    // User conditions (bad id, empty library, bad size) — exit 1.
+    if e.downcast_ref::<UserError>().is_some() {
         return true;
     }
     if let Some(pe) = e.downcast_ref::<pixcore::PixError>() {
@@ -127,7 +146,7 @@ pub fn edit_entry(paths: &Paths, id: &str, f: impl FnOnce(&mut Settings)) -> Res
     let mut lib = Library::load(paths).context("load library")?;
     let idx = lib
         .find_index(id)
-        .ok_or_else(|| anyhow::anyhow!("no entry matching {id:?} (see `pixpapers list`)"))?;
+        .ok_or_else(|| UserError(format!("no entry matching {id:?} (see `pixpapers list`)")))?;
     f(&mut lib.entries[idx].settings);
     let was_current = lib.current.as_deref() == Some(lib.entries[idx].id.as_str());
     let entry = lib.entries[idx].clone();
@@ -141,7 +160,7 @@ pub fn set_current(paths: &Paths, id: &str) -> Result<Entry> {
     let entry = lib
         .find(id)
         .cloned()
-        .ok_or_else(|| anyhow::anyhow!("no entry matching {id:?} (see `pixpapers list`)"))?;
+        .ok_or_else(|| UserError(format!("no entry matching {id:?} (see `pixpapers list`)")))?;
     lib.set_current(entry.id.clone());
     lib.save(paths).context("save manifest")?;
     Ok(entry)
@@ -151,7 +170,7 @@ pub fn set_current(paths: &Paths, id: &str) -> Result<Entry> {
 pub fn cycle_current(paths: &Paths, by: i64) -> Result<Entry> {
     let mut lib = Library::load(paths).context("load library")?;
     if lib.entries.is_empty() {
-        bail!("library empty — add one with: pixpapers add <image>");
+        return Err(anyhow::Error::from(pixcore::PixError::empty()));
     }
     let cur_idx = lib
         .current
@@ -243,7 +262,7 @@ pub fn export(
     let entry = lib
         .find(id)
         .cloned()
-        .ok_or_else(|| anyhow::anyhow!("no entry matching {id:?} (see `pixpapers list`)"))?;
+        .ok_or_else(|| UserError(format!("no entry matching {id:?} (see `pixpapers list`)")))?;
     // entry settings → overrides → config defaults (the one resolution
     // chain the daemon uses, so export == screen)
     let merged = merge_settings(&entry.settings, overrides);
@@ -352,5 +371,54 @@ pub fn human_bytes(b: u64) -> String {
         format!("{:.0}K", b as f64 / K as f64)
     } else {
         format!("{:.1}M", b as f64 / (K * K) as f64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! S9 task 7: user-condition errors classify as exit 1 (the messages
+    //! stayed byte-identical; only the classification changed).
+
+    use super::{cycle_current, edit_entry, export, is_user_error, set_current};
+    use crate::harness::Home;
+    use pixcore::{Config, Settings};
+
+    /// `cycle` on an empty library is a user error (exit 1, was 2) and
+    /// keeps the exact wording `list` prints for the same condition.
+    #[test]
+    fn cycle_empty_library_is_user_error() {
+        let home = Home::new();
+        let err = cycle_current(&home.paths, 1).expect_err("cycle on an empty library must fail");
+        assert!(is_user_error(&err), "exit must be 1, not 2");
+        assert_eq!(
+            err.to_string(),
+            "library empty — add one with: pixpapers add <image>"
+        );
+    }
+
+    /// Unknown ids on the id-taking paths are user errors, byte-identical
+    /// to the pre-audit messages.
+    #[test]
+    fn unknown_id_is_user_error() {
+        let home = Home::new();
+        let id = "0123456789ab";
+        let want = "no entry matching \"0123456789ab\" (see `pixpapers list`)";
+        let err = set_current(&home.paths, id).expect_err("unknown id must fail");
+        assert!(is_user_error(&err));
+        assert_eq!(err.to_string(), want);
+        let err = edit_entry(&home.paths, id, |_| {}).expect_err("unknown id must fail");
+        assert!(is_user_error(&err));
+        assert_eq!(err.to_string(), want);
+        let err = export(
+            &home.paths,
+            &Config::default(),
+            id,
+            &Settings::default(),
+            (16, 16),
+            None,
+        )
+        .expect_err("unknown id must fail");
+        assert!(is_user_error(&err));
+        assert_eq!(err.to_string(), want);
     }
 }
