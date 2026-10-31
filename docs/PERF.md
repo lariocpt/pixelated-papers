@@ -234,6 +234,32 @@ materialize; the worst named case, VGA, is still −16% vs auto). The v0.1
 headline numbers (6.3 KB @ 1080p/16, 22.3 KB @ 4K/16) stand unchanged:
 the default path did not move a single byte.
 
+## X11 blit: PutImage vs the Wayland stretch path (PLAN-30 §B.4)
+
+`test/bench-x11.sh` @ `1821986`, release build, this dev machine: each
+size gets a fresh Xvfb at that size, then 50 hot applies (two entries
+alternating, variant cache hot). Wall = CLI→IPC→render→PutImage round
+trip (same accounting as the Wayland switch-latency table above, ~10 ms
+CLI spawn included); the daemon's own counters split it — render =
+`composite_into` only, switch = composite + PutImage + flush, so
+switch − render ≈ the blit.
+
+| size | wall p50 / p95 | cold first apply | daemon render med (composite) | daemon switch med (composite+blit) | implied blit |
+|---|---|---|---|---|---|
+| 1920×1080 | **7 / 7 ms** | 71 ms | 3 ms | 4 ms | **~1 ms** |
+| 3840×2160 | **22 / 24 ms** | 86 ms | 11 ms | 19 ms | **~8 ms** |
+
+Reading: the x11 path lands in the **same order as the Wayland path** —
+same `composite_into` (render medians match the criterion stretch rows:
+2.7 ms @ 1080p, 11.6 ms @ 4K), different blit. PutImage ZPixmap moves
+8.3 MB @ 1080p and 33.5 MB @ 4K per apply over the local X socket for
+~1 / ~8 ms — comparable to the wayland shm commit it replaces, and the
+whole hot apply stays deep under the 100 ms bar at both sizes. Switch
+maxima (29 / 105 ms) are the two cold variant generations, not the blit
+(105 ms = the 4K cold-switch CPU number above). Xvfb is a software
+server; a real X server adds its own draw cost, but the request volume
+and this socket cost are identical.
+
 ## Memory & fds
 
 | state | RSS | fds |
@@ -266,5 +292,6 @@ test/bench-dither.sh                      # v0.2 quantize/dither stage timings
 test/bench-sizes.sh                       # v0.2 sizes vs v0.1 baseline (CPU)
 test/bench-normal.sh                      # S3.5: normal 4K one-time + variant sizes
 WAYLAND_DISPLAY=… test/bench-daemon.sh target/release/pixpapers 25
+test/bench-x11.sh target/release/pixpapers 25   # x11 blit under Xvfb (self-wraps)
 pixpapers status --bench                  # daemon's own counters
 ```
