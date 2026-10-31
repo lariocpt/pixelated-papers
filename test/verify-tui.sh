@@ -90,7 +90,7 @@ say "seeded A=$ID_A B=$ID_B C=$C_ID (current=A)"
 # cosmetic everywhere else.
 KEYS="c a$C_DIR/c.png\r k p l b #00ff00\r g 40\r t d s e j x Dy r q"
 
-if ! env PIXPAPERS_HOME="$HOME_" XDG_DOWNLOAD_DIR="$DL" TERM=xterm-256color \
+if ! headless env PIXPAPERS_HOME="$HOME_" XDG_DOWNLOAD_DIR="$DL" TERM=xterm-256color \
         PTY_RAW="$WORK/pty.raw" \
         python3 "$HERE/tui-pty.py" "$KEYS" -- "$BIN" tui > "$WORK/pty.out" 2>&1; then
     sed -n '1,12p' "$WORK/pty.out"
