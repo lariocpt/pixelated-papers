@@ -1,0 +1,30 @@
+┌ library ─────────────────────────────┐┌ preview ─────────────────────────────────────────────────┐
+│▸ d5113bb7 nebula               16 fit││116×22 · pixel 16 · fit                                   │  «sel»
+│  dc731e25 dunes                16 fit││palette auto · dither none                                │
+│                                      ││bg #000000 · gutter 24px                                  │
+│                                      ││                                                          │
+│                                      ││image preview unsupported here — pixpapers export d5113bb7│
+│                                      ││116x22 -o /tmp/prev.png                                   │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+└──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
+daemon:down · img:none · ready
+a add · s set · c cycle · p pixel · l place · b bg · g gutter · t palette · d dither · r refresh · x

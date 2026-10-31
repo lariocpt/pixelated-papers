@@ -16,6 +16,8 @@
 mod detect;
 mod draw;
 mod emit;
+#[cfg(test)]
+mod goldens;
 
 use std::io;
 
