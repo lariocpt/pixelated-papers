@@ -16,7 +16,7 @@ Palette-PNG variants vs the stored original (`variant_sizes` example):
 | photo 1080p @ 64 | 1.4 KB | 1.94 MB | 1435× |
 | photo 4K @ 16 | 22.3 KB | 7.80 MB | 350× |
 | flat-art 1080p @ 16 | 2.8 KB | 42 KB | 15× |
-| `normal` preset (any) | ≈ original | — | **1×** |
+| `normal` preset (`auto`/`none` default) | ≈ original | — | **1×** |
 
 **Honest reading.** The "≥100× smaller" claim is true for photographic
 sources (what wallpapers usually are) at pixel presets. Two walk-backs,
@@ -25,10 +25,14 @@ stated plainly:
 - **Flat art** that PNG already crushes (42 KB) only gains 8–67×. The
   tool is still right — a 2.8 KB canvas is the *minimum to display at all*
   — but the ratio sounds sexier with photos.
-- **`normal`** does no shrinking magic (it's the "no pixelation" escape,
-  palette-*encoded* ≈ 8× for photos — a PLTE over the full canvas, 1× for
-  well-compressed art; the quantize/dither stage never runs on `normal`).
-  It exists to not lie about pixelation, not to save bytes.
+- **`normal`** does no shrinking magic (it's the "no pixelation" escape;
+  the default `auto`+`none` never quantizes — it is byte-identical to
+  v0.1 — and is palette-*encoded* ≈ 8× for photos: a PLTE over the full
+  canvas, 1× for well-compressed art). Named palettes and dithers *do*
+  quantize the full canvas (S3.5): cached variants are 98–242 KB at 1080p
+  and 389–945 KB at 4K (`test/bench-normal.sh`, same commit as this
+  section) — MB-class, not KB-class. It exists to not lie about
+  pixelation, not to save bytes.
 
 ## Switch latency (what a human feels)
 
@@ -66,11 +70,14 @@ under the 100 ms bar.
 
 Measured at commit `45c9aa6` on the same dev machine, release build, by
 two pure-CPU headless scripts: `test/bench-dither.sh` (stage timings) and
-`test/bench-sizes.sh` (byte sizes + hashes). Both drive the test-only
-helper `test/bench-quantize/` over the same deterministic `photo()`
-fixture as the `variant_sizes` example, so these rows line up with the
-R8 table above. Timing medians move a few % run-to-run; the size table is
-deterministic (hashes reproduce exactly).
+`test/bench-sizes.sh` (byte sizes + hashes); the S3.5 subsections (the
+4K one-time case and the normal-variant sizes) come from
+`test/bench-normal.sh`, added in the same commit as this section. All
+drive the test-only helper `test/bench-quantize/` over the same
+deterministic `photo()` fixture as the `variant_sizes` example, so these
+rows line up with the R8 table above. Timing medians move a few
+% run-to-run; the size tables are deterministic (hashes reproduce
+exactly).
 
 ### Dither cost in canvas space (`test/bench-dither.sh`)
 
@@ -110,22 +117,65 @@ plan's `normal`+`vga`+`fs` case and its worst-case neighbour:
 
 (min is noisy at these durations; median is the honest column.)
 
-Two honest caveats:
+**S3.5 walk-back.** S3 flagged that "`normal` never reaches this code
+today": `generate_from_image` returned the crop *before* the quantize
+stage, so the palette/dither knobs were no-ops on `normal` (`normal +
+vga + fs` shipped a hard-banded photo while its label advertised fs).
+That was a wiring gap, not the design — PLAN-30 §A.1 described `normal`
+as dithering the full-size canvas all along. S3.5 settled the rule and
+shipped it: the plain-crop early return now survives **only** for
+`(auto, none)` (the v0.1 default, byte-identical — encode still does its
+`median_cut(255)`); `(off, *)` is identity (a dither has no palette to
+diffuse into); every other combination runs the existing `quantize`
+stage on the full canvas before the unchanged encode. The 1920×1080 rows
+above are what `normal` on a 1080p original pays. A `normal` crop of a
+4K original is 4K, so S3.5 measured the 4K case:
 
-- **`normal` never reaches this code today.** `generate_from_image`
-  returns the crop *before* the quantize stage for identity pixels, so
-  the palette/dither knobs are no-ops on `normal`. PLAN-30 §A.1 describes
-  `normal` as dithering the full-size canvas; the shipped wiring does not
-  (S3 measures, it does not change behavior — flagged for a plan/step
-  decision). The rows above are the stage cost measured directly: what
-  that wiring would pay, and what the plan's risk row budgets against.
-- **Budget check (plan §8: “> 1 s at 4K → document with the number,
-  keep”):** the plan's named case (`vga`+`fs` on the full-res canvas) is
-  **0.61 s** — inside budget. `auto`+`fs` at full res is **1.82 s** —
-  over the 1 s line, and it is median-cut at 2.07 M px that puts it there
-  (`auto`+`none` alone is 1.75 s; the dither adds only +74 ms). Documented
-  with the number per the risk row; not reachable via `normal` today, and
-  one-time + cached wherever a full-res canvas is ever quantized.
+### The 4K one-time case (`test/bench-normal.sh`)
+
+Full-canvas `quantize` on 3840×2160 — min/median ms over fixed iteration
+counts (2–4 warmup+timed runs; timings move a few % run-to-run):
+
+| palette | dither | min ms | median ms | Δ vs none |
+|---|---|---|---|---|
+| vga | none | 2099.95 | 2124.23 | — |
+| vga | fs | 2425.15 | 2448.36 | +324.12 ms |
+| auto | none | 7251.55 | 7311.17 | — |
+| auto | fs | 7193.66 | 7404.83 | +93.65 ms |
+
+(4K is 4× the pixels of S3's 1080p rows — the medians scale 4.0–4.1×.)
+
+**Budget check (plan §8: “> 1 s at 4K → document with the number,
+keep”):** at 4K *both* dithered cases are over the 1 s line — `vga`+`fs`
+is **2.45 s**, `auto`+`fs` **7.4 s** (median). The `auto` rows are
+median-cut at 8.3 M px that puts them there (`auto`+`none` alone is
+7.3 s; the dither adds only +94 ms); `vga`+`fs` is the plan's named
+worst case. Per the risk row: documented with the number and **kept** —
+it is a user-requested look, paid once per (palette, dither) cell and
+served from the variant cache forever after.
+
+### Cached normal-variant disk cost (`test/bench-normal.sh`)
+
+Full-size `normal` variant PNGs (dither `none`, the default), the same
+deterministic photo fixtures as the tables above (1.94 MB / 7.80 MB
+originals) — verbatim from the script, blake3/12 included:
+
+| fixture | preset | canvas | palette | bytes | blake3/12 |
+|---|---|---|---|---|---|
+| photo 1080p | normal | 1920×1080 | auto | 247350 | bf1a78df1f19 |
+| photo 1080p | normal | 1920×1080 | vga | 191888 | d619d661ef59 |
+| photo 1080p | normal | 1920×1080 | nes | 100081 | 18fb695b4212 |
+| photo 4K | normal | 3840×2160 | auto | 967337 | 58d757b16dd3 |
+| photo 4K | normal | 3840×2160 | vga | 727276 | fdb61b76c511 |
+| photo 4K | normal | 3840×2160 | nes | 398673 | 82f4a9474768 |
+
+**Reading.** A cached `normal` variant is MB-class, not KB-class: 98–242
+KB at 1080p, 389–945 KB at 4K (≈ 8–20× smaller than the original — the
+palette still compresses, it just has 2.1–8.3 M pixels to cover). Named
+tables beat auto every time (NES: −22 % at 1080p, −20 % at 4K vs
+auto); the size is deterministic (hashes reproduce exactly), the one-time
+cost is the 4K table above. That is the disk price of the no-pixelation
+look — paid once per cell, cached thereafter.
 
 ### Variant sizes: v0.1 baseline vs v2 default vs named palettes (`test/bench-sizes.sh`)
 
@@ -214,6 +264,7 @@ cargo bench -p pixcore                    # criterion suites
 cargo run --release -p pixcore --example variant_sizes
 test/bench-dither.sh                      # v0.2 quantize/dither stage timings
 test/bench-sizes.sh                       # v0.2 sizes vs v0.1 baseline (CPU)
+test/bench-normal.sh                      # S3.5: normal 4K one-time + variant sizes
 WAYLAND_DISPLAY=… test/bench-daemon.sh target/release/pixpapers 25
 pixpapers status --bench                  # daemon's own counters
 ```
