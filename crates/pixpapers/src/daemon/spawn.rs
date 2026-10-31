@@ -17,8 +17,8 @@ pub fn ensure_running(paths: &Paths) -> bool {
     if ipc::daemon_alive(&sock) {
         return true;
     }
-    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
-        log_note("WAYLAND_DISPLAY is not set — cannot start the daemon headlessly");
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() && std::env::var_os("DISPLAY").is_none() {
+        log_note("neither WAYLAND_DISPLAY nor DISPLAY is set — cannot start the daemon headlessly");
         return false;
     }
     let exe = match std::env::current_exe() {

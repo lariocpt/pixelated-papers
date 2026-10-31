@@ -100,6 +100,19 @@ pub struct X11Backend {
     bench: Bench,
 }
 
+/// Depth gate (§B.2): the buffer is XRGB8888 on a depth-24 root; any
+/// other depth is a loud user error — tested, not hoped for.
+fn check_root_depth(screen: usize, depth: u8) -> Result<(), String> {
+    if depth == 24 {
+        Ok(())
+    } else {
+        Err(format!(
+            "screen {screen} root depth is {depth}, but pixpapers' x11 backend needs a 24-bit \
+             truecolor display — configure your X server for depth 24 and restart"
+        ))
+    }
+}
+
 impl X11Backend {
     /// Connect to `$DISPLAY` (x11rb resolves it), validate the depth,
     /// intern the RFPWM atoms and select events on every root.
@@ -108,13 +121,7 @@ impl X11Backend {
             .map_err(|e| DaemonStartupError(format!("no x11 session (DISPLAY?): {e}")))?;
         let setup = conn.setup();
         for (i, scr) in setup.roots.iter().enumerate() {
-            if scr.root_depth != 24 {
-                return Err(DaemonStartupError(format!(
-                    "screen {i} root depth is {}, but pixpapers' x11 backend needs a 24-bit \
-                     truecolor display — configure your X server for depth 24 and restart",
-                    scr.root_depth
-                )));
-            }
+            check_root_depth(i, scr.root_depth).map_err(DaemonStartupError)?;
         }
         let lsb = setup.image_byte_order == ImageOrder::LSB_FIRST;
         let mut screens: Vec<ScreenOut> = setup
@@ -421,5 +428,29 @@ impl Backend for X11Backend {
 impl X11Backend {
     pub fn record_apply(&mut self, ms: u64) {
         self.bench.record_apply(ms);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_root_depth;
+
+    #[test]
+    fn depth_24_accepted() {
+        assert!(check_root_depth(0, 24).is_ok());
+    }
+
+    #[test]
+    fn depth_16_refused_loudly() {
+        let e = check_root_depth(0, 16).unwrap_err();
+        assert!(e.contains("depth is 16"), "{e}");
+        assert!(e.contains("24-bit"), "{e}");
+    }
+
+    #[test]
+    fn depth_32_refused_names_screen() {
+        let e = check_root_depth(1, 32).unwrap_err();
+        assert!(e.contains("screen 1"), "{e}");
+        assert!(e.contains("depth is 32"), "{e}");
     }
 }

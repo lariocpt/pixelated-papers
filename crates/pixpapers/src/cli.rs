@@ -236,7 +236,7 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
                 println!("use --all (whole-library re-optimize is the only mode)");
             }
         }
-        Cmd::Daemon { backend } => daemon::run_foreground(paths.clone(), backend.as_deref())?,
+        Cmd::Daemon { backend } => daemon::run_foreground(paths.clone(), cfg, backend.as_deref())?,
         Cmd::Stop => status::stop(paths)?,
         Cmd::Completions { shell } => {
             let mut app = <Cli as clap::CommandFactory>::command();
