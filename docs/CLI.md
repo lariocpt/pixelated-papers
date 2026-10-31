@@ -55,7 +55,7 @@ Changing a default re-applies to any *unset* current wallpaper immediately.
 
 | Command | Meaning |
 |---|---|
-| `status [--json] [--bench]` | Daemon truth when running (pid, outputs with live render label `16/fit`, enabled policy); filesystem view otherwise. `--bench` adds self-timed switch/render latencies, variant-cache hit rate, RSS + fd count. |
+| `status [--json] [--bench]` | Daemon truth when running (pid, outputs with live render label, enabled policy); filesystem view otherwise. The label is `{pixel}/{placement}-{palette}[-{dither}]` — e.g. `16/fit-auto`, `16/fit-vga-fs` — the same tokens as the variant cache key (the dither segment is omitted when `none`). `--bench` adds self-timed switch/render latencies, variant-cache hit rate, RSS + fd count. |
 | `export <ID> <WxH> [--pixel P] [--placement PL] [--bg C] [--gutter N] [--palette M] [--dither D] [-o OUT]` | Offline render to PNG using the daemon's exact composite path — a preview that cannot lie. No daemon needed. `--palette`/`--dither` override this render only (never persisted). Named modes write a palette PNG (PLTE = the table deduped by first occurrence, a transparent placeholder at index 0, and the bg colour merged in when absent); `off`/`auto` stay plain RGBA. |
 | `optimize [--all]` | Re-run the storage optimizer (PNG re-encode / strip cruft) over the library; `--all` includes entries unchanged since import. |
 | `completions <bash|zsh|fish>` | Shell completion script to stdout. |
