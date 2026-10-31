@@ -20,6 +20,11 @@ pub enum PixError {
     #[error("not found: {0}")]
     NotFound(String),
 
+    /// The library has no entries and the command needs one (S9 task 7:
+    /// a user error, exit 1). Carries the exact wording the CLI prints.
+    #[error("{0}")]
+    Empty(String),
+
     #[error("bad config at {}: {reason}", path.display())]
     Config { path: PathBuf, reason: String },
 
@@ -39,6 +44,9 @@ impl PixError {
     }
     pub fn other(msg: impl Into<String>) -> Self {
         Self::Other(msg.into())
+    }
+    pub fn empty() -> Self {
+        Self::Empty("library empty — add one with: pixpapers add <image>".to_string())
     }
 }
 

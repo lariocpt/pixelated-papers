@@ -103,6 +103,16 @@ run "$BIN" list > "$WORK/out.txt" || fail "list after remove failed"
 grep -q 'library empty' "$WORK/out.txt" || fail "remove left the entry behind"
 say "cycle survives a one-entry library; remove clears it"
 
+# cycle on the now-empty library is a user condition: exit 1 (S9 task 7 —
+# was 2), same wording `list` prints, no daemon involved (the error fires
+# before any spawn).
+rc=0
+run "$BIN" cycle > "$WORK/out.txt" 2>&1 || rc=$?
+[ "$rc" = "1" ] || fail "cycle on empty library exited $rc, expected 1: $(cat "$WORK/out.txt")"
+grep -q 'library empty' "$WORK/out.txt" \
+    || fail "cycle on empty library lost the wording: $(cat "$WORK/out.txt")"
+say "cycle on an empty library is a loud user error (exit 1)"
+
 # bar, second state: `remove` cleared `current`, and this layer never
 # spawned a daemon ⇒ the daemon-down line, still exactly one line.
 run "$BIN" bar > "$WORK/out.txt" || fail "bar (empty library) failed"
