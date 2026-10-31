@@ -434,9 +434,9 @@ TASK — implement the x11 backend per B.2:
    RFPWM broadcast => re-render at the new size;
    stop removes socket/pid and leaves the X server running;
    killing the X server => daemon exits 43.
-   CI-safe: the script runs under xvfb-run when present, else is skipped BY
-   NAME (honest skip, same policy as the live Wayland layer) — record the skip
-   in VERIFICATION.md if it triggers here.
+   The script must skip *by name* (honest skip, same policy as the live
+   Wayland layer) on machines without xvfb-run — but this machine is not
+   that case: see ACCEPTANCE below.
 5. Unit tests: the auto-detect env matrix (WAYLAND_DISPLAY x DISPLAY truth
    table) and the depth-24 refusal, both headless.
 
@@ -444,8 +444,11 @@ DO NOT TOUCH: the layer backend's behavior (you may not even reformat its
 lines); pixcore; anything in workstream A/C/D.
 
 ACCEPTANCE:
-- verify-x11.sh passes under xvfb-run on this machine (install xvfb if it is
-  missing — it's a test tool, note it in your summary).
+- verify-x11.sh passes under xvfb-run on this machine. NOTE: xvfb is not
+  installed here and the session shell has no passwordless sudo — if
+  `xvfb-run` is still missing when you start, STOP and report that the user
+  must run `sudo pacman -S xvfb` first; do NOT record a named skip for this
+  step (an unverified x11 backend is not a mergeable S5).
 - The full existing Wayland offline suite re-green (the seam's contract is
   unchanged): offline smoke + (on the live session, if you have it)
   verify-live.sh; if this box has no live Wayland session, record that as a
