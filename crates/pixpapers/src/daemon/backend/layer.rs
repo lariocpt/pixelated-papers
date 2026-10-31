@@ -657,6 +657,20 @@ impl Backend for LayerBackend {
             .collect()
     }
 
+    fn bench_counters(&self) -> super::BenchCounters {
+        let b = &self.state.bench;
+        super::BenchCounters {
+            applies: b.applies,
+            last_switch_ms: b.last_switch_ms,
+            switch_median_ms: b.switch_median_ms(),
+            switch_max_ms: b.switch_max_ms(),
+            render_median_ms: b.render_median_ms(),
+            render_max_ms: b.render_max_ms(),
+            variant_hits: b.hits,
+            variant_misses: b.misses,
+        }
+    }
+
     fn connection_lost(&self) -> bool {
         self.state.compositor_lost
     }

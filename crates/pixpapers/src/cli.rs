@@ -91,7 +91,11 @@ enum Cmd {
         all: bool,
     },
     /// Run the wallpaper daemon (foreground)
-    Daemon,
+    Daemon {
+        /// Display backend: layer (wayland) or x11
+        #[arg(long, value_name = "BACKEND")]
+        backend: Option<String>,
+    },
     /// Ask a running daemon to stop
     Stop,
     /// Emit a shell completion script
@@ -232,7 +236,7 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
                 println!("use --all (whole-library re-optimize is the only mode)");
             }
         }
-        Cmd::Daemon => daemon::run_foreground(paths.clone())?,
+        Cmd::Daemon { backend } => daemon::run_foreground(paths.clone(), backend.as_deref())?,
         Cmd::Stop => status::stop(paths)?,
         Cmd::Completions { shell } => {
             let mut app = <Cli as clap::CommandFactory>::command();

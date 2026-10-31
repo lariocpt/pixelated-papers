@@ -16,6 +16,7 @@ pub fn local_report(paths: &Paths, cfg: &Config) -> StatusReport {
         default_placement: cfg.default_placement.to_string(),
         current: lib.current,
         outputs: vec![],
+        backend: None,
         variants_on_disk,
         variant_bytes,
         bench: None,
@@ -52,7 +53,10 @@ pub fn print_report(r: &StatusReport, cfg: &Config, json: bool) {
     } else {
         "not running"
     };
-    println!("daemon:   {state} (pid {pid})");
+    match &r.backend {
+        Some(b) => println!("daemon:   {state} (pid {pid}, backend {b})"),
+        None => println!("daemon:   {state} (pid {pid})"),
+    }
     println!(
         "policy:   pixelation {} · default {} / {} · palette {} · dither {}",
         if r.enabled {
