@@ -187,3 +187,79 @@ In the real binary both pipe ends are `CLOEXEC` (the daemon `apply_now`
 auto-spawns must not inherit them) and the drain is bounded (poll-based,
 2 s deadline) so no holder can hang the TUI. The status lines are
 data-derived, so no test ever depended on the capture.
+
+## S8 — bar + waybar module (2026-10-31)
+
+`pixpapers bar` (PLAN-30-ct §D; `14cfa89`): exactly one line, always
+exit 0 — the contract waybar's custom-module auto-hide relies on (the
+module hides itself on empty output or a non-zero exit; `bar` does
+neither, so the button never blinks). Three character-exact states (4
+hermetic goldens + the `test/smoke.sh` offline checks; the entry case
+is proven identical with the daemon dead and alive — the liveness probe
+only disambiguates the no-entry case):
+
+  ▞ <title> · <pixel>/<placement-short>   e.g. `▞ nebula · 16/fit`
+  ▞ pixpapers — set one                   no current entry, daemon alive
+  ▞ pixpapers · daemon down               no current entry, socket dead
+
+A current entry wins even with a dead daemon: the label is
+config+manifest truth through the daemon's own resolution chain
+(`resolve_effective`), so it can never show a look the daemon would
+not render. Formatting is pure (pixcore `bar::bar_label`/`entry_line`);
+the manifest read + `daemon_alive` probe live in `commands::bar`, which
+never writes and never spawns. `cycle` takes a signed step
+(`allow_negative_numbers`) so `on-scroll-down cycle -1` works — the
+S8 wheel direction (`8c2f171`).
+
+Live row — `test/verify-waybar.sh` (in `14cfa89`): scratch
+`PIXPAPERS_HOME` seeded with three entries (alpha current / beta pixel
+32 / gamma) through the real CLI, every state mutation run via
+`pp_mutate` (`WAYLAND_DISPLAY`+`DISPLAY` stripped — since S5 a
+mutating call that can see a compositor auto-spawns a daemon that
+would repaint the user's real wallpaper); `bar` runs unstripped, the
+way waybar's exec children run it. A transient waybar 0.15.0 is
+pinned to the **bottom** edge of the real DP-1 output, clear of the
+user's top bar; `interval 30`; shots in `docs/screens/s8/`.
+
+| Row | What ran | Result |
+|---|---|---|
+| Render (**real**) | transient waybar `custom/pixpapers` (`exec "pixpapers bar"`, `interval 30`, `format "{text}"`); polled ≤ 15 s until the label's ink appeared in the bottom strip | `▞ alpha · 16/fit` bottom-right — `1-bar-alpha.png` + crop |
+| Click | **skip (named)**: no physical click can be injected into the user's live niri seat from the harness | substitute = the snippet's exact `on-click` command, run verbatim: `foot -e pixpapers tui` — `2-tui-in-foot.png`: the TUI up on the scratch library, the exact on-screen form the click would produce |
+| Scroll | **skip (named)**: no scroll injection, same reason | substitute = the exact commands the `on-scroll-up`/`on-scroll-down` bindings execute — `pixpapers cycle 1` / `pixpapers cycle -1` — plus `set`, all via `pp_mutate`: the state flips the wheel would drive |
+| Flip within one interval (**real**) | after each flip, a 72-px bottom-strip shot at +2 s (stale) and +33 s (past the next 30 s tick) | pixel identity/difference **scoped to the label's ink bbox** (any channel > 80; bar background ≤ (47,47,62), label ink ≈ 577 px per 16 chars — immune to pointer/wallpaper motion; the vision fleet was down — gdp7900xt cold, rtx3060ti hardware_unavailable — so no OCR): `1c≡3a` **0 px** · `3a→3b` **540 px** (`▞ alpha` → `▞ gamma`) · `3b≡4a` **0 px** · `4a→4b` **1 079 px** (`▞ gamma` → `▞ beta · 32/fit`); the exact label strings pinned at each step by the CLI's own `bar` output (`expect_bar`) |
+
+Style inheritance: every waybar instance loads the user's
+`~/.config/waybar/style.css` read-only — the transient bar's background
+is the user's own `window#waybar` rule: `rgba(30,30,46,0.92)` at 0.92
+alpha over the wallpaper measures (27,27,42)–(48,48,63), matching the
+shots exactly. The user's bar config and style were never touched.
+
+**Format finding** (why the snippet in `96460e1` ships `{text}`, not
+the plan's `{ }`): Arch's waybar 0.15.0-3.1 links the **system**
+libfmt 12.2.0 (0.13/0.14 pin fmt 11.0.2 via wrapdb). `"{ }"` — a space
+after `{` — is an invalid automatic argument reference, and fmt 12
+rejects it mixed with the module's named arguments: `fmt::format`
+throws on every tick, waybar's dp handler catches it, logs
+`custom/pixpapers: invalid format string`, and the module's event box
+stays **silently hidden** (no crash, no error in the output — a run
+that discards waybar's stderr sees a bar background with no text).
+A/B on the live seat: with identical configs the `"{ }"` module never
+rendered (the log line repeated per tick) while the `"{text}"` module
+rendered a 16-char label. `custom.cpp update()` is identical across
+0.13–0.15; only the distro's fmt differs. `"{text}"` is the form
+waybar documents and works across all three.
+
+Pre-existing, not changed here: `cycle` on an **empty** library exits
+2 (`error: library empty — add one with: pixpapers add <image>`, empty
+stdout). Harmless to the module: a binding's exit status cannot change
+the label — the text is supplied only by the module's own
+`exec`/`interval` re-run of `pixpapers bar`, which always prints one
+of the two no-entry lines.
+
+Gate (final tree): `cargo test --workspace` 83 pixcore + 58 pixpapers
+green · clippy `--workspace --all-targets -- -D warnings` green ·
+`fmt --check` clean · offline `smoke.sh` green (both bar sections,
+exactly-one-line assertion). Release binary
+(`cargo build --release`, this tree): **4,755,048 B** vs the S7
+4,751,720 B — **+3,328 B (+3.2 KiB)** for the `bar` subcommand +
+`Placement::short`.

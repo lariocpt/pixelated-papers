@@ -56,6 +56,7 @@ Changing a default re-applies to any *unset* current wallpaper immediately.
 | Command | Meaning |
 |---|---|
 | `status [--json] [--bench]` | Daemon truth when running (pid, outputs with live render label, enabled policy); filesystem view otherwise. The label is `{pixel}/{placement}-{palette}[-{dither}]` — e.g. `16/fit-auto`, `16/fit-vga-fs` — the same tokens as the variant cache key (the dither segment is omitted when `none`). `--bench` adds self-timed switch/render latencies, variant-cache hit rate, RSS + fd count. |
+| `bar` | One line for a bar — the [waybar module's](contrib/waybar/README.md) text source. Character-exact: `▞ <title> · <pixel>/<placement-short>` while a current entry exists (even with the daemon dead — config+manifest truth through the daemon's own resolution chain, so the label never shows a look the daemon would not render), `▞ pixpapers — set one` with no entry and the daemon alive, `▞ pixpapers · daemon down` with the socket dead. Always exactly one line, always exit 0 (waybar's custom module auto-hides on empty output or a non-zero exit, so the module can never blink). Never writes, never spawns; works offline. |
 | `export <ID> <WxH> [--pixel P] [--placement PL] [--bg C] [--gutter N] [--palette M] [--dither D] [-o OUT]` | Offline render to PNG using the daemon's exact composite path — a preview that cannot lie. No daemon needed. `--palette`/`--dither` override this render only (never persisted). Named modes write a palette PNG (PLTE = the table deduped by first occurrence, a transparent placeholder at index 0, and the bg colour merged in when absent); `off`/`auto` stay plain RGBA. |
 | `optimize [--all]` | Re-run the storage optimizer (PNG re-encode / strip cruft) over the library; `--all` includes entries unchanged since import. |
 | `completions <bash|zsh|fish>` | Shell completion script to stdout. |
@@ -122,6 +123,29 @@ status bar, never guessed silently):
 `PIX_PAPERS_IMAGE = none|kitty|iterm2|sixel` overrides detection — forces
 a protocol or the fallback (the test lever and the escape hatch for a
 false positive).
+
+## Waybar
+
+`contrib/waybar/` ships a toolbar module (config snippet + README):
+one button showing the current wallpaper — `▞ <title> ·
+<pixel>/<placement-short>` (e.g. `▞ nebula · 16/fit`), the two `bar`
+no-entry states otherwise. Click opens `pixpapers tui` in
+`${TERMINAL:-foot}`; the mouse wheel cycles (`on-scroll-up cycle 1`,
+`on-scroll-down cycle -1` — direction-aware, signed step, wrap-around).
+The label re-runs every 30 s and again on each click/scroll
+(`exec-on-event`) — not push-based, so a CLI/TUI `set`/`cycle` flips
+the label on the next tick, within at most one interval. No daemon
+required: `bar` is an offline config+manifest read.
+
+The snippet targets waybar ≥ 0.14 (tested on 0.15.0): the standalone
+`exec` module type was removed there, so the object lives under
+`custom/pixpapers` (0.13 and older: the same object under the bare
+`pixpapers` key). `format` must stay `"{text}"` — positional forms
+like `"{ }"` are rejected by the newer libfmt that current waybar
+links against (fmt 12 on the tested 0.15.0), and the module then stays
+**silently hidden** (it only logs `invalid format string`). Install,
+terminal, refresh, auto-hide and escape notes:
+[contrib/waybar/README.md](contrib/waybar/README.md).
 
 ## Daemon (foreground)
 
