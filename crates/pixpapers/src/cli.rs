@@ -56,8 +56,11 @@ enum Cmd {
     Enable,
     /// Turn pixelation off (originals only, placement unchanged)
     Disable,
-    /// Rotate to the next wallpaper (by N, default 1)
-    Cycle { by: Option<i64> },
+    /// Rotate to the next wallpaper (by N, default 1; negative = back)
+    Cycle {
+        #[arg(allow_negative_numbers = true)]
+        by: Option<i64>,
+    },
     /// Daemon status
     Status {
         #[arg(long)]
@@ -66,6 +69,8 @@ enum Cmd {
         #[arg(long)]
         bench: bool,
     },
+    /// One-line status for toolbar modules (contrib/waybar)
+    Bar,
     /// Offline render to a PNG (no daemon needed): e.g. 1920x1080
     Export {
         id: String,
@@ -212,6 +217,7 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
                 status::status(paths, cfg, json)
             }
         }
+        Cmd::Bar => commands::bar(paths, cfg)?,
         Cmd::Export {
             id,
             size,

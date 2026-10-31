@@ -13,14 +13,24 @@ cargo clippy --workspace --all-targets -- -D warnings   # must stay green
 cargo fmt --check
 env -u WAYLAND_DISPLAY test/smoke.sh        # offline layer (CI-safe, deterministic)
 WAYLAND_DISPLAY=wayland-1 test/verify-live.sh target/release/pixpapers
+WAYLAND_DISPLAY=wayland-1 test/verify-waybar.sh
 WAYLAND_DISPLAY=wayland-1 test/bench-daemon.sh target/release/pixpapers 25
 ```
 
-Tests: 76 pixcore (config atomicity + legacy palette bool, manifest
-version guard + palette/dither knobs, placement proptests, quantize goldens
-+ v0.1 byte-identity goldens (presets and `normal`), versioned variant
-cache, preview canvas/guard, sixel encoder). The daemon's
+Tests: 83 pixcore (config atomicity + legacy palette bool, manifest
+version guard + palette/dither knobs, placement proptests + short tokens,
+bar-label goldens, quantize goldens + v0.1 byte-identity goldens
+(presets and `normal`), versioned variant cache, preview canvas/guard,
+sixel encoder). The daemon's
 IPC/loop logic runs against in-process harnesses — headless is normal.
+The CLI goldens run the **built** `pixpapers` binary and refuse one that
+is stale relative to the sources that compile into it (`cargo test` alone
+does not rebuild the plain bin for in-bin unit tests) — run
+`cargo build` first after edits. Test-only modules (a file behind a
+file-level `#[cfg(test)] mod x;`, e.g. the harness itself) are excluded
+from the check: they never compile into the plain binary, and
+`cargo build` correctly leaves its mtime alone, so tracking them would
+demand a relink no build can produce.
 The TUI is golden-tested headlessly (10 `TestBackend` frames at a pinned
 100×30 under `crates/pixpapers/tests/golden/tui/`, regenerate with
 `PIX_UPDATE_GOLDENS=1`).
@@ -29,16 +39,22 @@ The TUI is golden-tested headlessly (10 `TestBackend` frames at a pinned
 
 - **`pkill -f "pixpapers daemon"` kills your own shell.** Use `pkill -x
   pixpapers`.
-- The harness shell has **no `WAYLAND_DISPLAY`**; live scripts require it
-  explicitly. Don't "fix" this by exporting it in tests that must be
-  headless-deterministic (smoke.sh's offline layer strips it on purpose).
+- The harness shell's compositor env (`WAYLAND_DISPLAY`, `DISPLAY`) is
+  **not stable** — after a server restart both were set; in an earlier
+  session neither was. Offline tests strip both explicitly (smoke.sh's
+  offline layer, `Home::cli`) — keep it that way: a `set`/`cycle` that
+  can see a compositor auto-spawns a daemon on the *user's real* home
+  (S5) and repaints the live desktop (that is how a debug `cycle -1`
+  probe leaked a wayland daemon over the user's wallpaper). Live scripts
+  assert the display env they need.
 - **Benchmarks run against `--release` only.** Debug timings are
   misleading; `status --bench` counts real renders, nothing else.
 - The live dev session is the maintainer's desktop. `test/verify-live.sh`
-  is safe (hermetic `PIXPAPERS_HOME`, cleans up). `wlr-randr` mode/scale
-  changes are **not** — they silently reset output scale (an incident cost
-  the user's scale 1.5). If you must touch outputs, restore the previous
-  state in the same command and say so in your summary.
+  and `test/verify-waybar.sh` are safe (hermetic `PIXPAPERS_HOME`, exact
+  PIDs only, clean up). `wlr-randr` mode/scale changes are **not** — they
+  silently reset output scale (an incident cost the user's scale 1.5). If
+  you must touch outputs, restore the previous state in the same command
+  and say so in your summary.
 - No `git push`/tags unless the user asked. Commit often, small, with the
   measured evidence in the message when behavior claims ride on it.
 - Perf/size claims in docs need a number + its source (which script,
