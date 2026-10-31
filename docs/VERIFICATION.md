@@ -112,3 +112,29 @@ stable number and it is unchanged) · V13 all knobs + disable/enable live, no
 errors, no blanking · V16 **1000/1000** fuzzed IPC requests answered,
 manifest/config hashes unchanged · V17 SIGTERM → teardown + socket removal
 **100 ms** → `ok`.
+
+## S6 — TUI core (2026-10-31)
+
+`pixpapers tui` (PLAN-30 §C.1–C.3): layout + list + offline preview +
+detection. Unit plane: 76 pixcore + 23 pixpapers tests, including 7
+ratatui `TestBackend` goldens at a pinned 100×30
+(`crates/pixpapers/tests/golden/tui/`) and byte-exact sixel/kitty/
+iTerm2/base64 wire tests. Live rows:
+
+| Row | What ran | Result |
+|---|---|---|
+| V-T0 plain-terminal fallback (**real**) | real pty (python `pty.fork`, winsize 100×30, `TERM=xterm-256color`, no image env vars — foot-class terminal), release binary | both panes + caption + fallback line render; `j`/`k`/`r`/`q` behave; exit 0; alternate screen entered **and** left |
+| V-T0b wire capture (**real**) | same pty with `PIX_PAPERS_IMAGE=kitty` / `iterm2` / `sixel` | kitty: `ESC_G a=T,f=100,i=1,c=58,r=22,C=1,q=2;<png b64>` observed on the wire; iTerm2: `ESC]1337;File=inline=1;base64;…BEL`; sixel: `ESC P q … ESC \`; status `preview 116×22 · 1 KB · <proto>`; all exit 0 |
+| V-T1 kitty on-screen | **skip (named)**: kitty is not installed on this host (foot only) — emission bytes are captured above; on-hardware display unverified | — |
+| V-T2 iTerm2 on-screen | **skip (named)**: macOS-only terminal, not available here | — |
+| V-T3 sixel terminal on-screen | **skip (named)**: no sixel-capable terminal installed (foot has none; xterm not installed) | — |
+| V-T4 export byte-identity (**real**) | 6 export variants (auto / vga+fs / gen16 / off / cover-gutter / normal+nes) `cmp` against the pre-refactor binary (564a966 worktree) | all byte-identical — the preview shares the export encoder verbatim |
+| V-T5 action keys | **skip (named)**: S7 wires them; S6 prints `(S7)` honestly | — |
+
+Gate at `343bc9a`: `cargo test --workspace` 76+23 green · clippy
+`-D warnings` green · `fmt --check` clean · offline `smoke.sh` green ·
+`--no-default-features` checks. Side finding fixed on the way
+(`20e73ce`): S5 made `DISPLAY` sufficient for daemon auto-spawn, so the
+offline layers (smoke.sh, harness) now strip `DISPLAY` too — two test-
+spawned daemons bound to deleted temp homes were found running and were
+killed with `pkill -x pixpapers`.

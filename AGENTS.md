@@ -16,11 +16,14 @@ WAYLAND_DISPLAY=wayland-1 test/verify-live.sh target/release/pixpapers
 WAYLAND_DISPLAY=wayland-1 test/bench-daemon.sh target/release/pixpapers 25
 ```
 
-Tests: 68 pixcore (config atomicity + legacy palette bool, manifest
+Tests: 76 pixcore (config atomicity + legacy palette bool, manifest
 version guard + palette/dither knobs, placement proptests, quantize goldens
 + v0.1 byte-identity goldens (presets and `normal`), versioned variant
-cache). The daemon's
+cache, preview canvas/guard, sixel encoder). The daemon's
 IPC/loop logic runs against in-process harnesses — headless is normal.
+The TUI is golden-tested headlessly (7 `TestBackend` frames at a pinned
+100×30 under `crates/pixpapers/tests/golden/tui/`, regenerate with
+`PIX_UPDATE_GOLDENS=1`).
 
 ## Hard rules
 
@@ -46,12 +49,13 @@ IPC/loop logic runs against in-process harnesses — headless is normal.
 
 Discipline over convenience. v0.1 runs on: image, serde(+json), toml,
 thiserror, anyhow, clap(+complete), dirs, blake3, tempfile, png,
-wayland-client, wayland-protocols(-wlr), libc, log/env_logger. Dev-only:
-proptest, snapbox, criterion. `signal-hook` was **removed on purpose**
-(its flag handlers silently never fired here — daemon/mod.rs has the raw
-sigaction replacement; don't re-add it without re-testing V17). Runtime
-deps still need a numbers-based justification; dev-deps just need to be
-honest tools.
+wayland-client, wayland-protocols(-wlr), libc, log/env_logger, and
+ratatui+crossterm (default-on `tui` feature; +270 KiB release, measured).
+Dev-only: proptest, snapbox, criterion. `signal-hook` was **removed on
+purpose** (its flag handlers silently never fired here — daemon/mod.rs has
+the raw sigaction replacement; don't re-add it without re-testing V17).
+Runtime deps still need a numbers-based justification; dev-deps just need
+to be honest tools.
 
 ## Architecture in four lines
 
