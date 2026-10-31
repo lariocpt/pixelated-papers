@@ -1,9 +1,8 @@
-# CLI reference — pixpapers v0.1.0
+# CLI reference — pixpapers v0.2
 
-Everything the binary accepts. This file is kept in sync with
-`pixpapers --help` by hand (a docs-drift CI check compares subcommand
-names). The man page (`contrib/pixpapers.1`) is generated from the same
-clap definitions, so flags here match the binary exactly.
+Everything the binary accepts. Kept in sync with `pixpapers --help` by
+hand — the clap definitions are the source of truth, so check flags here
+against `--help` in the same tree before relying on them.
 
 ## Global
 
@@ -18,7 +17,7 @@ pixpapers -V | -h
 |---|---|
 | `add <PATH> [--title T]` | Add a wallpaper. The image is decoded, re-encoded optimized, content-hashed (blake3) and stored under `~/.local/share/pixpapers/library/<id>/original.*`. Duplicate content → existing id, no copy. Ids are the first 8 hex chars of the hash. |
 | `list` | Library table: id, title, size, pixel, placement, current marker. |
-| `remove <ID>` | Delete entry: original + all cached variants. Refuses to remove the current wallpaper while set (clear it first with another `set`). |
+| `remove <ID>` | Delete entry: original + all cached variants; no dir or manifest residue. Removing the current entry is allowed — it clears `current`, and both backends then skip rendering (no current entry), so the screen keeps the last rendered wallpaper until you `set` another. The TUI's `D` confirms first and Applies only when the removed entry was current. |
 
 ## Applying
 
@@ -170,11 +169,16 @@ Backend selection (`daemon.backend` in config.toml, default `auto`):
 
 ## Exit codes
 
+The classifier is `is_user_error` (crates/pixpapers/src/commands.rs): a
+typed `PixError` exits 1 unless it is the catch-all `Other`;
+`DaemonStartupError` and `UserError` exit 1; a config-load failure in
+`main` exits 1. Everything else exits 2.
+
 | Code | Meaning |
 |---|---|
 | 0 | success |
-| 1 | user error (bad id, bad value, missing file, remove-current, no display session, unsupported screen depth) |
-| 2 | internal error (io, decode, config corruption) |
+| 1 | user error — the user said or provided something wrong: no entry matching an id, empty library, bad size `W×H` / colour / value, missing or undecodable image file, bad config or manifest, no display session (auto-detect names both variables), non-24-depth root (x11), daemon startup failure (refused connection, no backend) |
+| 2 | internal error — no user mistake: encoder failures (`PixError::Other`: PNG/JPEG re-encode at `add`, the variant encoder), bare I/O outside the typed paths (e.g. `export -o` cannot write its destination), a second **foreground** `daemon` finding the live socket (`already running`), clap usage/parse errors (framework convention) |
 | 43 | **daemon only**: the display server went away (wayland compositor / niri restart / X server killed). Teardown ran; socket/pid removed. A supervisor should NOT restart the daemon on 43 — there is no session to draw on. |
 
 ## Environment
