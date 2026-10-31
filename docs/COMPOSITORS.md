@@ -51,8 +51,11 @@ spawn "pixpapers" "daemon"
 
 or the systemd user unit in [`contrib/pixpapers.service`](../contrib) —
 the unit matters on niri where `spawn` entries get re-run on config
-reload: if both fire, the second `daemon` loses the socket race and exits
-1 with "already running" (harmless, logged).
+reload: if both fire, the second `daemon` loses the socket race and
+exits 2 with "a pixpapers daemon is already running" (harmless, logged;
+the S9 exit-code audit kept this at 2 — a duplicate start is an
+environment race, not a user condition. The "exits 1" this section used
+to claim was a doc bug, bare `anyhow::bail!` since v0.1 `10dbc8b`).
 
 **Do not** add `Restart=always` without `RestartPreventExitStatus=43`
 (see unit): on session end the daemon exits 43 on purpose; restarting it
@@ -80,14 +83,51 @@ Expectation: works — Background + no-input is core protocol surface used
 by every wallpaper tool. Untested. `pixpapers export` (any PNG-consumer)
 is the universal fallback.
 
-## X11 — not supported (by design)
+## X11 (root window) — shipped in v0.2
 
-> **TODO(S9):** superseded by v0.2 work — an `x11` backend now ships
-> (`daemon.backend = "x11"`, auto-detected from `DISPLAY`; PLAN-30 §B.2).
-> This section gets replaced by the real X11 write-up in S9; until then
-> treat it as v0.1 history.
+`85e59ed` (backend), `b549390` (auto-detect + config), `1821986`
+(evidence); PLAN-30-ct §B.2/§B.4. The daemon renders the same wallpaper
+on **every screen's root window** — X11's analog of the layer
+backend's multi-output behavior — through the *same*
+`composite_into` the wayland path uses (invariant #2), into a
+client-side XRGB8888 buffer, blitted with `PutImage` (BigReq-aware row
+bands). No Xv, no GPU — the backend does not depend on either.
 
-No X11 backend in v0.1. The escape hatch is the export command, which
+- **Auto-detect** (`daemon.backend`, default `auto`;
+  `daemon --backend <layer|x11>` overrides for testing):
+  `WAYLAND_DISPLAY` set ⇒ layer; else `DISPLAY` set ⇒ x11; else exit 1
+  naming both. A wrong explicit guess is a loud user error (exit 1) —
+  there is no silent fallback chain. Since v0.2, `set`/`cycle`/knobs
+  also auto-spawn the daemon under `DISPLAY` alone.
+- **Depth-24 contract**: the buffer is XRGB8888 on a depth-24 root.
+  Any other depth is refused at connect — loud exit 1: "screen N root
+  depth is D, but pixpapers' x11 backend needs a 24-bit truecolor
+  display — configure your X server for depth 24 and restart".
+  Tested, not hoped for.
+- **Scale**: X11 has no fractional scale — logical = physical, so the
+  buffer is the full root at 1:1. `Xft.dpi` is *not* read (the plan
+  allowed treating it as a scale; the shipped default and the tested
+  path is 1:1).
+- **Resize**: we never initiate one. An `Expose` (a root resize always
+  exposes) or an RFPWM/RRC resize ClientMessage makes the daemon
+  re-query `GetGeometry` and re-render at the new size.
+- **Compositor loss**: the X server dying (Xorg/Xvfb killed,
+  display-manager bounce) ⇒ teardown — socket + pidfile removed — and
+  **exit 43**, the identical contract to the wayland path (the same
+  `RestartPreventExitStatus=43` note above applies).
+
+Evidence: `test/verify-x11.sh` self-wraps in Xvfb and asserts six
+things — `DISPLAY`-only start ⇒ backend `x11`; the root pixmap
+byte-identical to the `export` oracle (AE=0); an RFPWM hint triggers a
+re-render at the new size, again oracle-identical; clean stop leaves
+the X server up; killing the X server ⇒ exit 43; a depth-16 root ⇒
+exit 1 with the loud depth message. The live-session row (a real
+Xwayland `DISPLAY=:0`) is recorded in
+[VERIFICATION.md](VERIFICATION.md) §S5. Blit numbers are in
+[PERF.md](PERF.md) ("X11 blit"). Multi-screen oddities beyond the
+tested single/few-screen setups wait for field reports.
+
+`export` remains the universal fallback for exotic X setups — it
 produces exactly what the daemon would draw:
 
 ```sh
