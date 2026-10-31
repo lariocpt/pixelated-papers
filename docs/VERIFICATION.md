@@ -37,7 +37,7 @@ Legend: ✅ passed · ⚠️ passed with limitation · ⏸ manual/deferred · �
 2. **Raw signal handler** (`daemon/mod.rs`) — replaces signal-hook entirely
    (dependency count −1). Root cause on this box not chased upstream: the
    empirical difference was reproduced with a 30-line standalone test.
-3. **Empty input region** (`daemon/wayland.rs`) — belt for lax compositors
+3. **Empty input region** (`daemon/backend/layer.rs`) — belt for lax compositors
    on V9; redundant on niri, protocol-cheap.
 
 ## Cross-compositor smoke (step 8.2)
@@ -55,3 +55,60 @@ should work — untested". v0.2: headless sway smoke in CI.
   machine-checked.
 - Fractional-scale exact buffers (V7): correct via legacy oversampled path.
 - 72 h soak (V15) pending a weekend.
+
+## Re-run after S4 (backend seam) — 2026-10-31
+
+S4 (PLAN-30 §B.1) moved `daemon/wayland.rs` to `daemon/backend/layer.rs`
+behind the new `Backend` trait and reshaped the supervisor around it.
+Gate: no behavior diff — switch latencies within run-to-run noise, V-matrix
+re-run recorded here. The rows above are the untouched 2026-10-24 records;
+everything below is the same host (niri 26.04, single output, fractional
+1.5) and the same scripts.
+
+**Bench brackets** — `test/bench-daemon.sh target/release/pixpapers 25`:
+
+| run | cold spawn+apply | preset change | hot p50 | hot p95 | hot max | self-timed median | self-timed max | variants | RSS · fds |
+|-----|-----------------|---------------|---------|---------|---------|-------------------|----------------|----------|-----------|
+| before #1 (694a248 binary) | 91 ms | 32 ms | 23 ms | 25 ms | 45 ms | 20 ms | 77 ms | 49/3 (94%) | 121224 KB · 9 (7 after sweep) |
+| before #2 (worktree @ 694a248) | 91 ms | 34 ms | 23 ms | 25 ms | 43 ms | 20 ms | 77 ms | 50/3 (94%) | 120948 KB · 9 (7) |
+| before #3 (worktree @ 694a248) | 93 ms | 31 ms | 24 ms | 28 ms | 43 ms | 20 ms | 79 ms | 49/3 (94%) | 120916 KB · 9 (7) |
+| **final (double-pump)** | **89 ms** | **31 ms** | **24 ms** | **24 ms** | **25 ms** | **21 ms** | **77 ms** | **52/3 (95%)** | **121104 KB · 9 (7)** |
+
+Every final number falls inside — mostly at the better edge of — the before
+brackets. Same numbers, same logs.
+
+**Interlude — the single-pump trap (rejected).** The first cut of the
+supervisor called `pump()` once per tick, *after* the poll — the literal
+reading of the new trait. That is measurably wrong: the first poll then ran
+*before* the first flush, so the cold-start handshake (registry → globals →
+binds → configure) slipped one tick per hop. The CLI's `set` (50 ms
+granularity) landed its `Apply` at t≈50, *before* the compositor's
+`configure` had been dispatched — the daemon answered an instant no-op ack
+(`set` returned **53/52 ms** vs 91/91/93 before) while the real 38 ms render
+finished in the background (first frame at t≈96 ms instead of t≈46 ms).
+Instrumented timelines (`t=` markers from both binaries, same session state)
+proved the mechanism: pre-seam, the pre-poll flush sent `get_registry` and
+niri answered *within the same tick*, so the whole handshake was done by
+tick 2 and `Apply` hit a configured surface — a redundant 38 ms cache-hit
+re-render, `set` back at t≈90. Distribution was cleanly separated:
+91–92 ms ×5 vs 52–53 ms ×5, reproduced across warm/cold session states.
+
+**Resolution.** The supervisor now pumps **before and after** the poll:
+`backend.pump()` → `poll2` → `backend.pump()`. §B.1 fixes the *trait*, not
+the loop shape, and the gate is zero behavior diff — so the pre-poll pump
+restores the pre-seam flush-before-poll ordering (flush the previous tick's
+queued requests, get the compositor's answer within this tick's poll). Its
+read only drains data already waiting on the fd; a would-block is a no-op.
+Same messages, same order, same tick; cost is one would-block read and two
+mutex ops per idle tick. Cold `set` returned to 91 ms and the bench to the
+before brackets (final row above). Do not "simplify" this back to a single
+post-poll pump.
+
+**V-matrix re-run** (2026-10-31, same host/niri as the table above;
+`test/verify-live.sh target/release/pixpapers`): V11 `kill -9` →
+respawn+apply **91 ms** (2026-10-24: 54 ms — respawn is machine-load
+dependent; the cold *spawn+first-apply* path in the bench bracket is the
+stable number and it is unchanged) · V13 all knobs + disable/enable live, no
+errors, no blanking · V16 **1000/1000** fuzzed IPC requests answered,
+manifest/config hashes unchanged · V17 SIGTERM → teardown + socket removal
+**100 ms** → `ok`.

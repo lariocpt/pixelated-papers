@@ -1,9 +1,23 @@
-//! The daemon: a single-threaded poll loop over [wayland fd, IPC socket,
+//! The daemon: a single-threaded poll loop over [backend fd, IPC socket,
 //! signal wake]. The CLI owns state; the daemon re-reads it on `Apply`.
+//! The loop is backend-agnostic (PLAN-30 §B.1): it drives the active
+//! display backend through `Backend` — pump, poll, pump, render, teardown,
+//! exit 43. The apply-latency bench and the status plumbing stay with the
+//! concrete backend for now (one backend exists; S5's status rework
+//! generalizes them).
+//!
+//! `pump()` runs once *before* the poll as well as after it: the pre-poll
+//! pump flushes the requests the previous tick queued (binds, commits),
+//! so the compositor's answer arrives within this tick's poll — the exact
+//! ordering of the pre-seam loop, which the cold-start handshake
+//! (registry → globals → binds → configure) depends on. The pre-poll read
+//! only drains data already waiting; whatever arrives during the poll is
+//! read and dispatched by the post-poll pump. Same messages, same order,
+//! same tick.
 
+pub mod backend;
 pub mod render;
 pub mod spawn;
-mod wayland;
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::{AsRawFd, RawFd};
@@ -12,12 +26,13 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use wayland_client::{Connection, EventQueue};
 
 use pixcore::{Config, Paths};
 
-use crate::ipc::{self, OutputStatus, Request, Response, StatusReport};
-use wayland::Daemon;
+use crate::ipc::{self, Request, Response, StatusReport};
+
+use backend::Backend;
+use backend::layer::LayerBackend;
 
 /// SIGTERM/SIGINT flip this; the loop checks it every tick and tears down
 /// cleanly. Raw handler: nothing else in the signal path can hang.
@@ -32,21 +47,8 @@ pub fn run_foreground(paths: Paths) -> Result<()> {
         .format_timestamp_secs()
         .init();
 
-    // ── wayland ───────────────────────────────────────────────────────
-    let conn = match Connection::connect_to_env() {
-        Ok(c) => c,
-        Err(e) => {
-            anyhow::bail!("no wayland session (WAYLAND_DISPLAY?): {e}");
-        }
-    };
-    let mut queue: EventQueue<Daemon> = conn.new_event_queue();
-    let qh = queue.handle();
-
-    let mut daemon = Daemon::new(paths.clone());
-    daemon.set_qh(qh.clone());
-
-    let registry = conn.display().get_registry(&qh, ());
-    let _ = registry; // events arrive via Dispatch<WlRegistry, ()>
+    // ── backend ───────────────────────────────────────────────────────
+    let mut backend = backend::layer::LayerBackend::connect_to_env(paths.clone())?;
 
     // ── socket (single instance) ──────────────────────────────────────
     let sock = paths.socket_file();
@@ -84,69 +86,50 @@ pub fn run_foreground(paths: Paths) -> Result<()> {
     // Apply the current wallpaper once surfaces have configured; the
     // configure event itself triggers the first render — nothing else to do.
 
-    let wayland_fd = conn.backend().poll_fd().as_raw_fd();
     let sock_fd = listener.as_raw_fd();
+    // The loop ends on Quit, display loss or signal; the backend only
+    // reports the display side of that.
+    let mut quit = false;
 
-    while daemon.running && SHUTDOWN.load(std::sync::atomic::Ordering::SeqCst) {
-        if let Err(e) = conn.flush() {
-            // EPIPE here means the compositor is gone (session end / niri
-            // restart): clean teardown, then exit 43 (see TROUBLESHOOTING).
-            log::error!("conn.flush: {e}");
-            daemon.compositor_lost = true;
-            daemon.running = false;
-        }
-        // Drain wayland events: prepare_read → poll → read → dispatch_pending.
-        // This is the documented manual-loop pattern; dispatch_pending alone
-        // never reads the socket, which is why globals never arrived before.
-        let guard = queue.prepare_read();
-        let (wl_ready, sock_ready) = poll2(wayland_fd, sock_fd, Duration::from_millis(300));
-        if wl_ready {
-            if let Some(g) = guard {
-                if let Err(e) = g.read() {
-                    use wayland_client::backend::WaylandError;
-                    match e {
-                        WaylandError::Io(ref io) if io.kind() == std::io::ErrorKind::WouldBlock => {
-                        }
-                        _ => {
-                            log::error!("read_events: {e}");
-                            daemon.compositor_lost = true;
-                            daemon.running = false;
-                        }
-                    }
-                }
-            }
-        }
-        match queue.dispatch_pending(&mut daemon) {
-            Ok(n) if n > 0 => log::debug!("dispatched {n} wayland events"),
-            Err(wayland_client::DispatchError::Backend(e)) => {
-                log::error!("dispatch backend error: {e}");
-                daemon.compositor_lost = true;
-                daemon.running = false;
-            }
-            _ => {}
-        }
+    while !quit && !backend.connection_lost() && SHUTDOWN.load(std::sync::atomic::Ordering::SeqCst)
+    {
+        // Pre-poll pump: flush requests queued by the previous tick's
+        // dispatch/handle_client so the compositor answers within this
+        // tick's poll (pre-seam ordering; see the module note).
+        backend.pump();
+        // poll over [backend fd, socket fd]; a backend without a display
+        // fd is polled on the socket alone. The backend fd in the poll set
+        // wakes the loop when the connection has events.
+        let sock_ready = match backend.poll_fd() {
+            Some(fd) => poll2(fd, sock_fd, Duration::from_millis(300)).1,
+            None => poll2(-1, sock_fd, Duration::from_millis(300)).1,
+        };
+        // Post-poll pump: drain the connection — flush, prepare_read →
+        // read → dispatch_pending, the documented manual-loop pattern, now
+        // owned by the backend. dispatch_pending alone never reads the
+        // socket, which is why globals never arrived before.
+        backend.pump();
 
         // IPC: accept + serve one client per tick (commands are tiny)
-        if sock_ready {
-            handle_client(&listener, &mut daemon, &conn);
+        if sock_ready && handle_client(&listener, &mut backend, &paths) {
+            quit = true;
         }
 
         if !SHUTDOWN.load(std::sync::atomic::Ordering::SeqCst) {
             log::info!("signal received; shutting down");
-            daemon.running = false;
+            quit = true;
         }
     }
 
-    // teardown: drop outputs (Out::Drop destroys surfaces), then socket/pid
-    daemon.outputs.clear();
-    let _ = conn.flush();
-    let _ = queue.dispatch_pending(&mut daemon);
+    // teardown: backend first (destroys surfaces, drains the connection),
+    // then socket/pid
+    backend.close();
     let _ = std::fs::remove_file(&sock);
     let _ = std::fs::remove_file(paths.pid_file());
     log::info!("bye");
     // Session gone (niri restart / logout): distinct exit so a supervisor or
     // the TROUBLESHOOTING guide can tell "killed" from "session ended".
-    if daemon.compositor_lost {
+    if backend.connection_lost() {
         std::process::exit(43);
     }
     Ok(())
@@ -167,11 +150,12 @@ fn prepare_socket(sock: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Accept + serve one client (read a line, act, reply, close).
-fn handle_client(listener: &UnixListener, daemon: &mut Daemon, conn: &Connection) {
+/// Accept + serve one client (read a line, act, reply, close). Returns
+/// true when the client asked the daemon to quit.
+fn handle_client(listener: &UnixListener, backend: &mut LayerBackend, paths: &Paths) -> bool {
     let (stream, _) = match listener.accept() {
         Ok(s) => s,
-        Err(_) => return,
+        Err(_) => return false,
     };
     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     let mut reader = BufReader::new(&stream);
@@ -181,7 +165,7 @@ fn handle_client(listener: &UnixListener, daemon: &mut Daemon, conn: &Connection
             // EOF or timeout with no bytes: answer rather than close silently,
             // so a client always gets a reply (never waits out its timeout).
             let _ = reply(&stream, &Response::err("empty request"));
-            return;
+            return false;
         }
         Ok(_) => {}
     }
@@ -189,23 +173,31 @@ fn handle_client(listener: &UnixListener, daemon: &mut Daemon, conn: &Connection
         Ok(r) => r,
         Err(e) => {
             let _ = reply(&stream, &Response::err(format!("bad request: {e}")));
-            return;
+            return false;
         }
     };
     log::debug!("ipc: {req:?}");
     match req {
         Request::Apply => {
             let t0 = std::time::Instant::now();
-            daemon.render_all(conn);
-            daemon.bench.record_apply(t0.elapsed().as_millis() as u64);
+            backend.render_all(paths);
+            // The bench lives with the backend that owns the render path
+            // (S4: one backend; S5's status rework moves this behind the
+            // trait).
+            backend
+                .state
+                .bench
+                .record_apply(t0.elapsed().as_millis() as u64);
             let _ = reply(&stream, &Response::ok(None));
+            false
         }
         Request::Status => {
-            let _ = reply(&stream, &Response::ok(Some(status_report(daemon))));
+            let _ = reply(&stream, &Response::ok(Some(status_report(backend, paths))));
+            false
         }
         Request::Quit => {
             let _ = reply(&stream, &Response::ok(None));
-            daemon.running = false;
+            true
         }
     }
 }
@@ -216,22 +208,10 @@ fn reply(stream: &std::os::unix::net::UnixStream, r: &Response) -> std::io::Resu
     (&*stream).write_all(&bytes)
 }
 
-fn status_report(daemon: &Daemon) -> StatusReport {
-    let cfg = Config::load(&daemon.paths.config_file).unwrap_or_default();
-    let lib = pixcore::Library::load(&daemon.paths)
-        .ok()
-        .unwrap_or_default();
-    let outputs: Vec<OutputStatus> = daemon
-        .snapshot()
-        .into_iter()
-        .map(|(name, width, height, scale, variant)| OutputStatus {
-            name,
-            width,
-            height,
-            scale,
-            variant,
-        })
-        .collect();
+fn status_report(backend: &LayerBackend, paths: &Paths) -> StatusReport {
+    let cfg = Config::load(&paths.config_file).unwrap_or_default();
+    let lib = pixcore::Library::load(paths).ok().unwrap_or_default();
+    let outputs = backend.snapshot();
     StatusReport {
         daemon_running: true,
         daemon_pid: Some(std::process::id()),
@@ -243,14 +223,14 @@ fn status_report(daemon: &Daemon) -> StatusReport {
         variants_on_disk: 0, // cheap scan done in status.rs against shared FS
         variant_bytes: 0,
         bench: Some(crate::ipc::BenchReport {
-            applies: daemon.bench.applies,
-            last_switch_ms: daemon.bench.last_switch_ms,
-            switch_median_ms: daemon.bench.switch_median_ms(),
-            switch_max_ms: daemon.bench.switch_max_ms(),
-            render_median_ms: daemon.bench.render_median_ms(),
-            render_max_ms: daemon.bench.render_max_ms(),
-            variant_hits: daemon.bench.hits,
-            variant_misses: daemon.bench.misses,
+            applies: backend.state.bench.applies,
+            last_switch_ms: backend.state.bench.last_switch_ms,
+            switch_median_ms: backend.state.bench.switch_median_ms(),
+            switch_max_ms: backend.state.bench.switch_max_ms(),
+            render_median_ms: backend.state.bench.render_median_ms(),
+            render_max_ms: backend.state.bench.render_max_ms(),
+            variant_hits: backend.state.bench.hits,
+            variant_misses: backend.state.bench.misses,
             rss_kb: self_rss_kb(),
             fds: self_fds(),
         }),

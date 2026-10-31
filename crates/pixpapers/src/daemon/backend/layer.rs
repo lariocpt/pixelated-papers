@@ -1,11 +1,12 @@
-//! Wayland session: background layer surfaces on every output, shm buffers,
-//! render on change. Raw `wayland-client` 0.31 + `wlr-layer-shell` (the
-//! protocol every wlroots-family compositor — niri included — takes
-//! wallpapers with). Single-threaded; the `Daemon` struct here is the
-//! EventQueue state and is also polled alongside the IPC socket in `super`.
+//! The layer-shell backend: background layer surfaces on every output, shm
+//! buffers, render on change. Raw `wayland-client` 0.31 + `wlr-layer-shell`
+//! (the protocol every wlroots-family compositor — niri included — takes
+//! wallpapers with). Single-threaded; the supervisor in `crate::daemon`
+//! drives this through [`Backend`] and polls the connection fd alongside
+//! the IPC socket. `LayerState` is the EventQueue state.
 
 use std::fs::File;
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, AsRawFd, RawFd};
 
 use memmap2::MmapMut;
 use wayland_client::protocol::wl_buffer::{self, WlBuffer};
@@ -16,7 +17,7 @@ use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_shm::{self, WlShm};
 use wayland_client::protocol::wl_shm_pool::WlShmPool;
 use wayland_client::protocol::wl_surface::WlSurface;
-use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
+use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
     zwlr_layer_surface_v1::{
@@ -26,7 +27,10 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 
 use pixcore::{Config, Paths};
 
-use super::render;
+use crate::daemon::render;
+use crate::ipc::OutputStatus;
+
+use super::Backend;
 
 pub const NAMESPACE: &str = "pixelated-papers";
 
@@ -128,22 +132,23 @@ impl Bench {
     }
 }
 
-/// Everything the daemon owns; also the wayland EventQueue state.
-pub struct Daemon {
+/// The layer backend's state; also the wayland EventQueue state. The
+/// supervisor owns loop termination (Quit/signal/lost); the state only
+/// records that the compositor went away (niri restart / session end):
+/// exit 43.
+pub struct LayerState {
     pub paths: Paths,
     pub compositor: Option<WlCompositor>,
     pub shm: Option<WlShm>,
     pub layer_shell: Option<ZwlrLayerShellV1>,
     pub outputs: Vec<Out>,
-    pub running: bool,
-    /// The compositor went away (niri restart / session end): exit 43.
     pub compositor_lost: bool,
     pub bench: Bench,
     next_id: usize,
-    qh: Option<QueueHandle<Daemon>>,
+    qh: Option<QueueHandle<LayerState>>,
 }
 
-impl Daemon {
+impl LayerState {
     pub fn new(paths: Paths) -> Self {
         Self {
             paths,
@@ -151,7 +156,6 @@ impl Daemon {
             shm: None,
             layer_shell: None,
             outputs: Vec::new(),
-            running: true,
             compositor_lost: false,
             bench: Bench::default(),
             next_id: 0,
@@ -159,7 +163,7 @@ impl Daemon {
         }
     }
 
-    pub fn set_qh(&mut self, qh: QueueHandle<Daemon>) {
+    pub fn set_qh(&mut self, qh: QueueHandle<LayerState>) {
         self.qh = Some(qh);
     }
 
@@ -321,7 +325,7 @@ impl Daemon {
 fn ensure_buf(
     b: &mut ShmBuf,
     shm: WlShm,
-    qh: &QueueHandle<Daemon>,
+    qh: &QueueHandle<LayerState>,
     bw: u32,
     bh: u32,
     user: (usize, usize),
@@ -358,7 +362,7 @@ fn mmap_to_words(mmap: &mut MmapMut) -> &mut [u32] {
 
 // ── Dispatch impls ─────────────────────────────────────────────────────
 
-impl Dispatch<WlRegistry, ()> for Daemon {
+impl Dispatch<WlRegistry, ()> for LayerState {
     fn event(
         state: &mut Self,
         registry: &WlRegistry,
@@ -421,7 +425,7 @@ impl Dispatch<WlRegistry, ()> for Daemon {
     }
 }
 
-impl Dispatch<WlOutput, usize> for Daemon {
+impl Dispatch<WlOutput, usize> for LayerState {
     fn event(
         state: &mut Self,
         _proxy: &WlOutput,
@@ -463,7 +467,7 @@ impl Dispatch<WlOutput, usize> for Daemon {
     }
 }
 
-impl Dispatch<ZwlrLayerSurfaceV1, usize> for Daemon {
+impl Dispatch<ZwlrLayerSurfaceV1, usize> for LayerState {
     fn event(
         state: &mut Self,
         _proxy: &ZwlrLayerSurfaceV1,
@@ -521,7 +525,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for Daemon {
     }
 }
 
-impl Dispatch<WlBuffer, (usize, usize)> for Daemon {
+impl Dispatch<WlBuffer, (usize, usize)> for LayerState {
     fn event(
         state: &mut Self,
         _proxy: &WlBuffer,
@@ -543,9 +547,125 @@ impl Dispatch<WlBuffer, (usize, usize)> for Daemon {
     }
 }
 
-wayland_client::delegate_noop!(Daemon: ignore WlCompositor);
-wayland_client::delegate_noop!(Daemon: ignore WlRegion);
-wayland_client::delegate_noop!(Daemon: ignore WlShm);
-wayland_client::delegate_noop!(Daemon: ignore WlShmPool);
-wayland_client::delegate_noop!(Daemon: ignore WlSurface);
-wayland_client::delegate_noop!(Daemon: ignore ZwlrLayerShellV1);
+wayland_client::delegate_noop!(LayerState: ignore WlCompositor);
+wayland_client::delegate_noop!(LayerState: ignore WlRegion);
+wayland_client::delegate_noop!(LayerState: ignore WlShm);
+wayland_client::delegate_noop!(LayerState: ignore WlShmPool);
+wayland_client::delegate_noop!(LayerState: ignore WlSurface);
+wayland_client::delegate_noop!(LayerState: ignore ZwlrLayerShellV1);
+
+// ── the backend the supervisor drives ───────────────────────────────────
+
+/// The layer-shell [`Backend`]: owns the wayland connection, the event
+/// queue and its state. The supervisor sees only the trait (PLAN-30
+/// §B.1); `LayerState` remains the EventQueue state the Dispatch impls
+/// above hang off.
+pub struct LayerBackend {
+    conn: Connection,
+    queue: EventQueue<LayerState>,
+    /// Public so the supervisor's status/bench plumbing can reach the
+    /// counters (S4: one backend; S5's status rework moves this behind the
+    /// trait).
+    pub state: LayerState,
+}
+
+impl LayerBackend {
+    /// Connect to the compositor from `WAYLAND_DISPLAY`, build the queue
+    /// and state, and request the registry (events arrive via
+    /// `Dispatch<WlRegistry, ()>`).
+    pub fn connect_to_env(paths: Paths) -> anyhow::Result<Self> {
+        let conn = match Connection::connect_to_env() {
+            Ok(c) => c,
+            Err(e) => {
+                anyhow::bail!("no wayland session (WAYLAND_DISPLAY?): {e}");
+            }
+        };
+        let queue = conn.new_event_queue();
+        let qh = queue.handle();
+
+        let mut state = LayerState::new(paths);
+        state.set_qh(qh.clone());
+
+        let registry = conn.display().get_registry(&qh, ());
+        let _ = registry; // events arrive via Dispatch<WlRegistry, ()>
+
+        Ok(Self { conn, queue, state })
+    }
+}
+
+impl Backend for LayerBackend {
+    fn name(&self) -> &'static str {
+        "layer"
+    }
+
+    fn poll_fd(&self) -> Option<RawFd> {
+        Some(self.conn.backend().poll_fd().as_raw_fd())
+    }
+
+    fn pump(&mut self) {
+        if let Err(e) = self.conn.flush() {
+            // EPIPE here means the compositor is gone (session end / niri
+            // restart): clean teardown, then exit 43 (see TROUBLESHOOTING).
+            log::error!("conn.flush: {e}");
+            self.state.compositor_lost = true;
+        }
+        // prepare_read → read → dispatch_pending: the documented manual-loop
+        // pattern. The read is non-blocking — a would-block means the
+        // connection has nothing to give this tick (the fd wasn't ready);
+        // the guard is consumed either way. dispatch_pending alone never
+        // reads the socket, which is why globals never arrived before.
+        if let Some(guard) = self.queue.prepare_read() {
+            if let Err(e) = guard.read() {
+                use wayland_client::backend::WaylandError;
+                match e {
+                    WaylandError::Io(ref io) if io.kind() == std::io::ErrorKind::WouldBlock => {}
+                    _ => {
+                        log::error!("read_events: {e}");
+                        self.state.compositor_lost = true;
+                    }
+                }
+            }
+        }
+        match self.queue.dispatch_pending(&mut self.state) {
+            Ok(n) if n > 0 => log::debug!("dispatched {n} wayland events"),
+            Err(wayland_client::DispatchError::Backend(e)) => {
+                log::error!("dispatch backend error: {e}");
+                self.state.compositor_lost = true;
+            }
+            _ => {}
+        }
+    }
+
+    fn render_all(&mut self, paths: &Paths) {
+        // The supervisor passes the Paths it built us with; keep the stored
+        // copy authoritative for the render path.
+        self.state.paths = paths.clone();
+        self.state.render_all(&self.conn);
+    }
+
+    fn snapshot(&self) -> Vec<OutputStatus> {
+        self.state
+            .snapshot()
+            .into_iter()
+            .map(|(name, width, height, scale, variant)| OutputStatus {
+                name,
+                width,
+                height,
+                scale,
+                variant,
+            })
+            .collect()
+    }
+
+    fn connection_lost(&self) -> bool {
+        self.state.compositor_lost
+    }
+
+    fn close(&mut self) {
+        // teardown: drop outputs (Out::Drop destroys surfaces), then flush
+        // and drain the connection
+        self.state.outputs.clear();
+        let _ = self.conn.flush();
+        let _ = self.queue.dispatch_pending(&mut self.state);
+    }
+}
