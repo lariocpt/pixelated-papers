@@ -21,7 +21,7 @@ version guard + palette/dither knobs, placement proptests, quantize goldens
 + v0.1 byte-identity goldens (presets and `normal`), versioned variant
 cache, preview canvas/guard, sixel encoder). The daemon's
 IPC/loop logic runs against in-process harnesses — headless is normal.
-The TUI is golden-tested headlessly (7 `TestBackend` frames at a pinned
+The TUI is golden-tested headlessly (10 `TestBackend` frames at a pinned
 100×30 under `crates/pixpapers/tests/golden/tui/`, regenerate with
 `PIX_UPDATE_GOLDENS=1`).
 
