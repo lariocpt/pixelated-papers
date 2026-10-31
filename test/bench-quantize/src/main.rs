@@ -5,6 +5,8 @@
 //!
 //!   quantize-cost   stage timings for `pipeline::quantize` (dither cost)
 //!   sizes           variant byte sizes + blake3 hashes (palette cost)
+//!   normal-cost     full-canvas quantize timings at 3840×2160 (S3.5)
+//!   normal-sizes    full-size normal-variant PNG sizes at 1080p/4K (S3.5)
 //!
 //! The `photo()` fixture is byte-for-byte the generator from
 //! crates/pixcore/examples/variant_sizes.rs, so these numbers line up with
@@ -187,12 +189,73 @@ fn sizes() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// normal-cost  (PLAN-30 S3.5)
+// ---------------------------------------------------------------------------
+
+/// Full-canvas quantize timings on a 3840×2160 canvas (a `normal` crop of a
+/// 4K original is 4K). S3 measured 1920×1080; this is the 4K one-time cost.
+/// vga+none / vga+fs and auto+none / auto+fs, with Δ vs the `none` baseline.
+fn normal_cost() {
+    println!("# normal preset — full-canvas quantize cost (3840×2160) — evidence for docs/PERF.md\n");
+    println!("| canvas | shape | palette | dither | min ms | median ms | Δ vs none |");
+    println!("|---|---|---|---|---|---|---|");
+    let full = photo(3840, 2160);
+    for (mode, iters) in [(PaletteMode::Vga, 4), (PaletteMode::Auto, 3)] {
+        let mut none_med = 0.0;
+        for d in [Dither::None, Dither::FloydSteinberg] {
+            let (min, med) = time_quantize(&full, mode, d, iters);
+            if d == Dither::None {
+                none_med = med;
+            }
+            println!(
+                "| 3840×2160 | normal (one-time) | {mode} | {d} | {min:.2} | {med:.2} | {} |",
+                if d == Dither::None {
+                    "—".to_string()
+                } else {
+                    format!("{:+.2} ms", med - none_med)
+                }
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// normal-sizes  (PLAN-30 S3.5)
+// ---------------------------------------------------------------------------
+
+/// Full-size `normal`-variant PNG byte sizes + blake3 at 1080p/4K for
+/// {auto, vga, nes} — the disk cost of cached normal variants (dither none,
+/// the default). Same photo() fixture / CoverCrop/gutter-24 as the other
+/// size tables.
+fn normal_sizes() {
+    println!("# normal preset — full-size variant PNG sizes — evidence for docs/PERF.md\n");
+    println!("| fixture | preset | canvas | palette | bytes | blake3/12 |");
+    println!("|---|---|---|---|---|---|");
+    for (fx, w, h) in [("photo 1080p", 1920u32, 1080u32), ("photo 4K", 3840, 2160)] {
+        let orig = photo(w, h);
+        for mode in [PaletteMode::Auto, PaletteMode::Vga, PaletteMode::Nes] {
+            let canvas = variant::generate_from_image(&orig, &settings("normal", mode), (w, h));
+            let bytes = variant::encode_variant(&canvas, mode);
+            let hash = blake3::hash(&bytes).to_hex()[..12].to_string();
+            println!(
+                "| {fx} | normal | {}×{} | {mode} | {} | {hash} |",
+                canvas.width(),
+                canvas.height(),
+                bytes.len()
+            );
+        }
+    }
+}
+
 fn main() {
     match std::env::args().nth(1).as_deref() {
         Some("quantize-cost") => quantize_cost(),
         Some("sizes") => sizes(),
+        Some("normal-cost") => normal_cost(),
+        Some("normal-sizes") => normal_sizes(),
         _ => {
-            eprintln!("usage: bench-quantize quantize-cost | sizes");
+            eprintln!("usage: bench-quantize quantize-cost | sizes | normal-cost | normal-sizes");
             std::process::exit(2);
         }
     }
