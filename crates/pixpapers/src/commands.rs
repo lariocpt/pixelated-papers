@@ -166,6 +166,28 @@ pub fn cycle_current(paths: &Paths, by: i64) -> Result<Entry> {
     Ok(entry)
 }
 
+/// `pixpapers bar` — exactly one line for the waybar module (S8/D.1):
+/// `▞ <title> · <pixel>/<placement-short>`, or `▞ pixpapers — set one` /
+/// `▞ pixpapers · daemon down`. The label is offline config+manifest
+/// truth through the daemon's own resolution chain
+/// (`resolve_effective`), so it can never show a look the daemon would
+/// not render; the daemon probe only disambiguates the no-entry case.
+/// Never writes, never spawns.
+pub fn bar(paths: &Paths, cfg: &Config) -> Result<()> {
+    let lib = Library::load(paths).ok().unwrap_or_default();
+    let current = lib
+        .current
+        .as_deref()
+        .and_then(|id| lib.entries.iter().find(|e| e.id == id))
+        .map(|e| (e.title.clone(), resolve_effective(e, cfg)));
+    let line = pixcore::bar_label(
+        current.as_ref().map(|(t, r)| (t.as_str(), r)),
+        crate::ipc::daemon_alive(&paths.socket_file()),
+    );
+    println!("{line}");
+    Ok(())
+}
+
 pub fn set_enabled(paths: &Paths, cfg: &mut Config, on: bool) -> Result<()> {
     cfg.enabled = on;
     cfg.save(&paths.config_file).context("save config")?;

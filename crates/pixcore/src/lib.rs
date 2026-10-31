@@ -5,6 +5,7 @@
 //! unit-testable, and `pixpapers export` renders bit-for-bit what the daemon
 //! will put on screen.
 
+pub mod bar;
 pub mod color;
 pub mod config;
 pub mod error;
@@ -20,6 +21,7 @@ pub mod render;
 pub mod sixel;
 pub mod variant;
 
+pub use bar::{bar_label, entry_line};
 pub use color::RgbCss;
 pub use config::BackendChoice;
 pub use config::Config;

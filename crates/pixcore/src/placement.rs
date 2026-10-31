@@ -37,6 +37,19 @@ pub enum Placement {
     Stretch,
 }
 
+impl Placement {
+    /// Compact token for one-line labels (the waybar bar, S8): the kebab
+    /// forms would widen a 30px toolbar — `gutter`/`crop` stay legible.
+    pub fn short(&self) -> &'static str {
+        match self {
+            Placement::Fit => "fit",
+            Placement::CoverGutter => "gutter",
+            Placement::CoverCrop => "crop",
+            Placement::Stretch => "stretch",
+        }
+    }
+}
+
 impl std::fmt::Display for Placement {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
@@ -244,6 +257,19 @@ mod tests {
                 }
             }
         });
+    }
+
+    #[test]
+    fn short_tokens() {
+        let cases = [
+            (Placement::Fit, "fit"),
+            (Placement::CoverGutter, "gutter"),
+            (Placement::CoverCrop, "crop"),
+            (Placement::Stretch, "stretch"),
+        ];
+        for (p, tok) in cases {
+            assert_eq!(p.short(), tok, "{p}");
+        }
     }
 
     #[test]

@@ -7,13 +7,14 @@
 //! auto-spawn a real daemon (S5 made `DISPLAY` sufficient for the x11
 //! backend); the only socket traffic it can produce goes to our listener.
 
+use std::collections::HashSet;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Write as _;
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use pixcore::{Dither, PaletteMode, Paths};
 
@@ -22,6 +23,172 @@ use crate::ipc::Request;
 /// The repo's shared test fixture (`crates/pixpapers` → `test/fixture.png`).
 pub(crate) fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixture.png")
+}
+
+/// Refuse to run the CLI goldens against a missing or stale binary.
+/// `cargo test` alone does not rebuild the plain bin artifact for in-bin
+/// unit tests, so `target/<profile>/pixpapers` can silently lag behind the
+/// sources; the mtime check turns that silent false-positive into a loud
+/// "run `cargo build` first" failure.
+///
+/// Test-only modules are excluded from the comparison: a file behind a
+/// file-level `#[cfg(test)] mod x;` declaration (the harness itself is the
+/// only one today) never compiles into the plain binary, so editing it
+/// cannot make the binary stale — and `cargo build` correctly leaves the
+/// binary's mtime alone, which an unfiltered walk would flag as a
+/// staleness no build can cure.
+fn fresh_bin(bin: &Path) {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut newest: Option<(SystemTime, PathBuf)> = None;
+    let pp_src = manifest.join("src");
+    walk_mtime(&pp_src, &pp_src, &mut newest, &test_only_paths(&pp_src));
+    let pc_src = manifest.join("../pixcore/src");
+    walk_mtime(&pc_src, &pc_src, &mut newest, &test_only_paths(&pc_src));
+    for toml in ["Cargo.toml", "../pixcore/Cargo.toml"] {
+        let path = manifest.join(toml);
+        let t = std::fs::metadata(&path)
+            .unwrap_or_else(|e| panic!("{path:?} unreadable: {e}"))
+            .modified()
+            .unwrap();
+        if newest.is_none() || t > newest.as_ref().unwrap().0 {
+            newest = Some((t, path));
+        }
+    }
+    let Some((newest_t, newest_p)) = newest else {
+        panic!("no sources found under {}", manifest.display());
+    };
+    let bin_meta = match std::fs::metadata(bin) {
+        Ok(m) => m,
+        Err(e) => panic!(
+            "pixpapers binary not found at {} ({e}) — the CLI goldens need a \
+             build; run `cargo build` first",
+            bin.display()
+        ),
+    };
+    if bin_meta.modified().unwrap() < newest_t {
+        panic!(
+            "pixpapers binary at {} is older than the sources ({} is newer) \
+             — the CLI goldens would verify a stale build; run `cargo build` first",
+            bin.display(),
+            newest_p.display()
+        );
+    }
+}
+
+/// `root`-relative paths of entries that compile only under
+/// `#[cfg(test)]`: for every `mod name;` declaration (file-level — an
+/// inline `mod name {` block stays in the file it is written in, which
+/// the walk keeps tracking) whose attribute run includes `cfg(test)`,
+/// both `name.rs` and a `name/` module tree are skipped, wherever the
+/// declaring file lives (nesting composes: a test-only file's own
+/// declarations are scanned too).
+fn test_only_paths(root: &Path) -> HashSet<PathBuf> {
+    let mut skip: HashSet<PathBuf> = HashSet::new();
+    let mut dirs = vec![root.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(ft) = entry.file_type() else {
+                continue;
+            };
+            let path = entry.path();
+            if ft.is_dir() {
+                dirs.push(path);
+                continue;
+            }
+            if path.extension().is_some_and(|e| e != "rs") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(file_rel) = path.strip_prefix(root) else {
+                continue;
+            };
+            let parent = file_rel.parent().map(Path::to_path_buf).unwrap_or_default();
+            for name in cfg_test_file_mods(&text) {
+                skip.insert(parent.join(format!("{name}.rs")));
+                skip.insert(parent.join(&name));
+            }
+        }
+    }
+    skip
+}
+
+/// Names of file-level `mod name;` declarations whose attribute run
+/// contains `cfg(test)`. The run is the attribute lines immediately above
+/// the declaration (doc/other comments do not break it); any other code
+/// line does. A `cfg(test)` anywhere in the run gates the module out of
+/// the plain build, so the run — not just the last attribute — decides.
+fn cfg_test_file_mods(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut test_attr = false;
+    for raw in text.lines() {
+        let t = raw.trim();
+        let rest = t
+            .strip_prefix("pub(crate) mod ")
+            .or_else(|| t.strip_prefix("pub mod "))
+            .or_else(|| t.strip_prefix("mod "));
+        if let Some(rest) = rest {
+            let rest = rest.trim_start();
+            // The name runs to the first `;`, `{` or whitespace; the
+            // terminator is the first non-blank character after it
+            // (`;` = file-level module, `{` = inline block).
+            let cut = rest.find([';', '{', ' ', '\t']).unwrap_or(rest.len());
+            let name = rest[..cut].trim();
+            let term = rest[cut..].trim_start().chars().next();
+            let is_ident = !name.is_empty()
+                && name
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if term == Some(';') && is_ident && test_attr {
+                out.push(name.to_string());
+            }
+            test_attr = false;
+        } else if let Some(attr) = t.strip_prefix("#[") {
+            if attr.contains("cfg(test)") {
+                test_attr = true;
+            }
+        } else if !t.is_empty()
+            && !t.starts_with("//")
+            && !t.starts_with("/*")
+            && !t.starts_with("*")
+        {
+            test_attr = false;
+        }
+    }
+    out
+}
+
+fn walk_mtime(
+    root: &Path,
+    dir: &Path,
+    newest: &mut Option<(SystemTime, PathBuf)>,
+    skip: &HashSet<PathBuf>,
+) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        let ft = entry.file_type().unwrap();
+        let Ok(rel) = path.strip_prefix(root) else {
+            continue;
+        };
+        if skip.contains(rel) {
+            continue;
+        }
+        if ft.is_dir() {
+            walk_mtime(root, &path, newest, skip);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            let t = entry.metadata().unwrap().modified().unwrap();
+            if newest.is_none() || t > newest.as_ref().unwrap().0 {
+                *newest = Some((t, path));
+            }
+        }
+    }
 }
 
 /// A hermetic `PIXPAPERS_HOME` (tempdir, required dirs created).
@@ -46,12 +213,15 @@ impl Home {
         }
     }
 
-    /// The real `pixpapers` binary. `cargo test` sets `CARGO_BIN_EXE_pixpapers`
-    /// for this package's test targets; the fallback reconstructs
-    /// `target/<profile>/pixpapers` from the test binary's location for
-    /// direct invocations.
+    /// The real `pixpapers` binary. `CARGO_BIN_EXE_pixpapers` is set for
+    /// integration test targets; unit tests living inside a bin never get
+    /// it (and a plain `cargo test` does not rebuild the plain bin
+    /// artifact either), so the fallback reconstructs
+    /// `target/<profile>/pixpapers` from the test binary's location.
+    /// Either way the binary must be fresh (see [`fresh_bin`]): goldens
+    /// run against a stale build would silently pass stale behavior.
     pub(crate) fn bin() -> PathBuf {
-        std::env::var_os("CARGO_BIN_EXE_pixpapers")
+        let path = std::env::var_os("CARGO_BIN_EXE_pixpapers")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
                 let exe = std::env::current_exe().unwrap();
@@ -61,7 +231,9 @@ impl Home {
                 deps.parent()
                     .expect("deps/ lives in a target directory")
                     .join("pixpapers")
-            })
+            });
+        fresh_bin(&path);
+        path
     }
 
     /// Run the CLI as a subprocess against this home (headless-safe).
@@ -313,6 +485,96 @@ fn cli_edit_non_current_entry_records_only() {
         reqs.is_empty(),
         "non-current edit must not touch the daemon: {reqs:?}"
     );
+}
+
+/// `cycle -1` through the real clap surface: without
+/// `allow_negative_numbers`, clap rejects the leading `-` as an unknown
+/// flag, which would break the waybar snippet's on-scroll-down binding
+/// (S8: wheel down = `cycle -1`, per 8c2f171). Two entries is enough to
+/// see the direction: from the second, -1 lands on the first.
+#[test]
+fn cli_cycle_negative_parses_and_steps_back() {
+    let home = Home::new();
+    let (code, out, err) = home.cli(&["add", fixture().to_str().unwrap(), "--title", "a"]);
+    assert_eq!(code, 0, "add a failed:\n{out}\n{err}");
+    let small = home.small_source();
+    let (code, out, err) = home.cli(&["add", small.to_str().unwrap(), "--title", "b"]);
+    assert_eq!(code, 0, "add b failed:\n{out}\n{err}");
+    let (id_a, id_b) = (home.entry_id(0), home.entry_id(1));
+    crate::commands::set_current(&home.paths, &id_b).unwrap();
+
+    let (code, out, err) = home.cli(&["cycle", "-1"]);
+    assert_eq!(code, 0, "cycle -1 failed:\n{out}\n{err}");
+    home.assert_line(
+        &out,
+        &format!("cycle → {id_a} · a (recorded — will show when the daemon runs)"),
+    );
+    assert_eq!(
+        pixcore::Library::load(&home.paths)
+            .unwrap()
+            .current
+            .as_deref(),
+        Some(id_a.as_str())
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bar label (S8: the waybar line, exactly one line each state)
+// ---------------------------------------------------------------------------
+
+/// A current entry wins even with a dead daemon socket: the label is
+/// config+manifest truth (what the daemon *would* render), so a recorded
+/// wallpaper keeps its name offline. Fresh home ⇒ defaults 16/fit.
+#[test]
+fn bar_current_entry_dead_daemon() {
+    let home = Home::new();
+    let (code, out, err) = home.cli(&["add", fixture().to_str().unwrap(), "--title", "nebula"]);
+    assert_eq!(code, 0, "add failed:\n{out}\n{err}");
+    let id = home.entry_id(0);
+    crate::commands::set_current(&home.paths, &id).unwrap();
+
+    let (code, out, err) = home.cli(&["bar"]);
+    assert_eq!(code, 0, "bar failed:\n{out}\n{err}");
+    home.assert_line(&out, "▞ nebula · 16/fit");
+}
+
+/// The entry line is identical with a live daemon: the liveness probe
+/// never changes the entry case (it only disambiguates a missing entry).
+#[test]
+fn bar_current_entry_alive_daemon() {
+    let home = Home::new();
+    let (code, out, err) = home.cli(&["add", fixture().to_str().unwrap(), "--title", "nebula"]);
+    assert_eq!(code, 0, "add failed:\n{out}\n{err}");
+    let id = home.entry_id(0);
+    crate::commands::set_current(&home.paths, &id).unwrap();
+    DaemonHarness::start(&home.paths);
+
+    let (code, out, err) = home.cli(&["bar"]);
+    assert_eq!(code, 0, "bar failed:\n{out}\n{err}");
+    home.assert_line(&out, "▞ nebula · 16/fit");
+}
+
+/// No current entry (no manifest yet) + a daemon that answers: ask the
+/// user to set one. The harness's `{"ok":true}` reply is all
+/// `ipc::daemon_alive` needs.
+#[test]
+fn bar_no_entry_alive_daemon() {
+    let home = Home::new();
+    DaemonHarness::start(&home.paths);
+
+    let (code, out, err) = home.cli(&["bar"]);
+    assert_eq!(code, 0, "bar failed:\n{out}\n{err}");
+    home.assert_line(&out, "▞ pixpapers — set one");
+}
+
+/// No current entry + a dead socket: the daemon-down line.
+#[test]
+fn bar_no_entry_dead_daemon() {
+    let home = Home::new();
+
+    let (code, out, err) = home.cli(&["bar"]);
+    assert_eq!(code, 0, "bar failed:\n{out}\n{err}");
+    home.assert_line(&out, "▞ pixpapers · daemon down");
 }
 
 // ---------------------------------------------------------------------------

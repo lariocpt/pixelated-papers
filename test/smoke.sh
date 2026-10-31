@@ -61,6 +61,17 @@ run "$BIN" list > "$WORK/out.txt" || fail "list after edits failed"
 grep -q '64 .*cover-crop' "$WORK/out.txt" || fail "edits not visible in list"
 say "per-wallpaper knobs persist"
 
+# bar: exactly one line (waybar chokes on multi-line exec output). The
+# entry's own 64/cover-crop beat the untouched 16/fit defaults; no daemon
+# exists in this layer and the entry wins anyway — the probe only
+# disambiguates the no-entry case (checked after `remove` below).
+run "$BIN" bar > "$WORK/out.txt" || fail "bar failed"
+grep -qx '▞ first · 64/crop' "$WORK/out.txt" \
+    || fail "bar label wrong after knob edits: $(cat "$WORK/out.txt")"
+LINES=$(grep -c '' "$WORK/out.txt")
+[ "$LINES" = "1" ] || fail "bar printed $LINES lines (waybar needs exactly one)"
+say "bar label matches the current entry (no daemon)"
+
 run "$BIN" default pixel 32 > /dev/null || fail "default pixel failed"
 run "$BIN" disable > /dev/null || fail "disable failed"
 run "$BIN" enable > /dev/null || fail "enable failed"
@@ -91,6 +102,15 @@ run "$BIN" remove first > "$WORK/out.txt" || fail "remove failed"
 run "$BIN" list > "$WORK/out.txt" || fail "list after remove failed"
 grep -q 'library empty' "$WORK/out.txt" || fail "remove left the entry behind"
 say "cycle survives a one-entry library; remove clears it"
+
+# bar, second state: `remove` cleared `current`, and this layer never
+# spawned a daemon ⇒ the daemon-down line, still exactly one line.
+run "$BIN" bar > "$WORK/out.txt" || fail "bar (empty library) failed"
+grep -qx '▞ pixpapers · daemon down' "$WORK/out.txt" \
+    || fail "bar with no entry must say daemon down: $(cat "$WORK/out.txt")"
+LINES=$(grep -c '' "$WORK/out.txt")
+[ "$LINES" = "1" ] || fail "bar printed $LINES lines (waybar needs exactly one)"
+say "bar reports daemon down with an empty library"
 
 # ----------------------------------------------------------------- daemon live
 if [ -z "${WAYLAND_DISPLAY:-}" ]; then
