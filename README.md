@@ -59,14 +59,18 @@ niri 26.04, 3840×2160 at fractional scale 1.5, release build, dev machine:
 |---|---|
 | cold `set` (spawn + generate + render + commit) | **91 ms** |
 | hot switch between cached wallpapers, n=50 | p50 **23 ms** · p95 **45 ms** |
-| variant on disk, 1080p photo @ 16 px | **6.3 KB** vs 1.94 MB original (310×) |
-| variant on disk, 4K photo @ 16 px | **22 KB** vs 7.8 MB (350×) |
+| variant on disk, 1080p photo @ 16 px (v2 default: auto, dither none) | **6.3 KB** vs 1.94 MB original (310×) — byte-identical to v0.1 |
+| variant on disk, 4K photo @ 16 px (same default path) | **22 KB** vs 7.8 MB (350×) |
+| named palettes vs auto, photo @ 16 | gb **−77%** · nes −45% · vga −18% — no palette bloats a variant |
+| dither cost on the preset canvases (fs / bayer8) | ≤ **+5.6 ms** one-time, cached |
 | idle daemon | **4.4 MB RSS · 5 fds** |
 | daemon displaying a 5K buffer | ~121 MB (two output-sized shm buffers) |
 
 The full numbers, what they mean and where they wash out are in
 [docs/PERF.md](docs/PERF.md). Reproduce them with `cargo bench`,
-`test/bench-daemon.sh` and `pixpapers status --bench`.
+`test/bench-daemon.sh` and `pixpapers status --bench`; the v0.2
+palette/dither rows come from `test/bench-sizes.sh` and
+`test/bench-dither.sh` @ `45c9aa6`.
 
 ## Install
 
