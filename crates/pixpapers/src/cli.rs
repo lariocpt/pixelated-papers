@@ -277,8 +277,10 @@ fn notify_daemon(paths: &Paths) {
     );
 }
 
-/// Apply now, auto-spawning the daemon when needed.
-fn apply_now(paths: &Paths) {
+/// Apply now, auto-spawning the daemon when needed. `pub(crate)`: the
+/// TUI (S7) calls the *same* seam — the client never reimplements
+/// spawn/notify (PLAN-30 invariant #1).
+pub(crate) fn apply_now(paths: &Paths) {
     if daemon::spawn::ensure_running(paths) {
         let _ = ipc::roundtrip(
             &paths.socket_file(),
@@ -288,7 +290,9 @@ fn apply_now(paths: &Paths) {
     }
 }
 
-fn state_line(paths: &Paths) -> &'static str {
+/// `pub(crate)` for the TUI's set/cycle status lines (same wording as the
+/// CLI output).
+pub(crate) fn state_line(paths: &Paths) -> &'static str {
     if ipc::daemon_alive(&paths.socket_file()) {
         "applied"
     } else {
