@@ -104,8 +104,27 @@ pub fn generate_from_image(
     let v = crate::placement::view((orig.width(), orig.height()), out, s.placement, s.gutter_px);
     if s.pixel.is_identity() {
         // `normal`: the canvas is the dest itself — nearest stretch happens
-        // in composite; no downscale, no palette.
-        return pipeline::crop(orig, v.window);
+        // in composite. S3.5 settled rule: the plain-crop early return
+        // applies ONLY when the resolved look is exactly (Auto, None) —
+        // the v0.1 default, whose bytes must stay identical (encode still
+        // does its median_cut(255), exactly as v0.1 did). Every other
+        // (palette, dither) combination runs the crop through the existing
+        // pipeline::quantize stage — the same stage the pixelated presets
+        // use — before the unchanged encode_variant:
+        //   (Off, *)       → quantize is identity (a dither has no palette
+        //                    to diffuse into) → the same crop bytes as
+        //                    v0.1's palette=false normal
+        //   (named, none) → full-canvas nearest to the named table (encode's
+        //                    re-map is idempotent on colors already on the
+        //                    table)
+        //   (*, dither ≠ none) → full-canvas quantize + error diffusion /
+        //                    ordered dither — the "photo → console" look
+        //                    A.1 describes
+        let crop = pipeline::crop(orig, v.window);
+        if s.palette == PaletteMode::Auto && s.dither == Dither::None {
+            return crop;
+        }
+        return pipeline::quantize(&crop, s.palette, s.dither);
     }
     let mut var = pipeline::downscale_to_variant(orig, &v, s.pixel.block_px());
     if s.palette != PaletteMode::Off {
