@@ -1,0 +1,30 @@
+// pixpapers — one-line wallpaper label for the waybar toolbar.
+//
+// Install (waybar >= 0.14, tested on 0.15.0): the bare `exec` module
+// type was removed, so the module lives under a `custom/<name>` key with
+// the same `exec`/`interval`/`format`/`on-*` keys. Copy the object
+// below into your waybar config and add "custom/pixpapers" to
+// modules-center or modules-right, e.g.:
+//
+//   "modules-right": ["custom/pixpapers", "pulseaudio", "clock"]
+//
+// On waybar 0.13 or older the same object works under the bare key
+// "pixpapers" (the old exec module type) instead.
+//
+// `format` must use the named `{text}` placeholder. Positional forms
+// like `{ }` (a common idiom in older tutorials) are rejected by the
+// newer libfmt that current waybar links against (fmt 12 on the tested
+// 0.15.0): the module logs `invalid format string` and then stays
+// silently hidden. `{text}` is the form waybar documents and works
+// across versions.
+//
+// See README.md for terminal env, refresh semantics and removal.
+
+"custom/pixpapers": {
+  "format": "{text}",
+  "exec": "pixpapers bar",
+  "interval": 30,
+  "on-click": "${TERMINAL:-foot} -e pixpapers tui",
+  "on-scroll-up": "pixpapers cycle 1",
+  "on-scroll-down": "pixpapers cycle -1"
+}
