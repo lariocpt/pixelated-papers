@@ -225,6 +225,98 @@ When done, print: the full numbers table as it landed in PERF.md.
 
 ---
 
+## S3.5 — `normal` honors palette/dither (S1 wiring gap)
+
+```
+Work in /home/lario/Projects/personal/pixelated-papers. You are executing step
+S3.5 of PLAN-30-ct.md — a wiring gap S3's bench exposed: on the `normal`
+preset, generate_from_image early-returns the crop (the v0.1 behavior, kept
+by S1), so the quantize stage — and with it every dither — never runs on
+normal. Named palettes DO still apply, but at encode time (nearest, no
+diffusion): `normal + vga + fs` currently ships a hard-banded photo while its
+label and caption advertise fs. This step closes the gap with one settled
+rule.
+
+Read first:
+  AGENTS.md
+  PLAN-30-ct.md   — §2 A.1/A.2 (the normal paragraphs), §1 (invariant: the
+                    v0.1 default look stays byte-identical), §10
+  crates/pixcore/src/variant.rs — generate_from_image (the is_identity early
+                    return) and the encode_variant/encode_palette path: v0.1's
+                    normal under palette=true ran median_cut(255) AT ENCODE;
+                    palette=false wrote plain RGBA
+  crates/pixcore/src/pipeline.rs — quantize (the stage normal must now reach)
+  docs/PERF.md    — S3's normal bullet (the one you walk back)
+  v0.1 reference: a git worktree at 29ef2b4 (the parent of the first S1
+                    commit — the same base S1/S3 used for byte-identity);
+                    remove it when done
+
+THE RULE (settled before this step started — implement exactly this):
+  In generate_from_image, for an identity pixel (`normal`), the plain-crop
+  early return applies ONLY when the resolved look is exactly (Auto, None) —
+  the v0.1 default, whose bytes must stay identical (encode still does its
+  median_cut(255), exactly as v0.1 did).
+  Every other (palette, dither) combination for normal runs the crop through
+  the EXISTING pipeline::quantize stage — the same stage the pixelated presets
+  use — before the unchanged encode_variant:
+    (Off, *)             -> quantize is identity (a dither has no palette to
+                            diffuse into) -> the same crop bytes as v0.1's
+                            palette=false normal
+    (named, none)       -> full-canvas nearest to the named table (encode's
+                            re-map is idempotent on colors already on the table)
+    (*, dither != None) -> full-canvas quantize + error diffusion / ordered
+                            dither — the "photo -> console" look A.1 describes
+  No new stages, no new encode logic, no change to the pixelated path.
+
+TASK:
+1. Implement the rule in variant.rs; replace the stale "no downscale, no
+   palette" comment with the rule stated above.
+2. Tests (pixcore):
+   - normal + (Auto, None) byte-identical to the v0.1 worktree's normal
+     output — extend the existing v01 identity fixtures to the normal preset
+     (S1/S3 only proved @16/@8; normal is the case that matters now);
+   - normal + (Off, None) byte-identical to v0.1's palette=false normal;
+   - proptest: normal + named -> every output color is in the table;
+   - dither is honored: on photo128x80, normal+(vga, fs) bytes !=
+     normal+(vga, none) bytes, colors still within VGA; same assertion for
+     (auto, fs);
+   - determinism: two runs of each new normal path -> equal bytes;
+   - goldens: normal preset on photo128x80 for {auto+fs, vga+fs, nes+none,
+     gen16+none};
+   - cache: a normal variant at (Q,D) gets the v2 key shape and prunes like
+     any other variant (the key scheme already covers it — assert the path).
+3. Bench (release; extend test/bench-dither.sh or add test/bench-normal.sh,
+   same style): full-canvas quantize on a 3840x2160 canvas — vga+fs and
+   auto+fs (S3 measured 1920x1080; a normal crop of a 4K original is 4K);
+   plus full-size variant PNG byte sizes at 1920x1080 and 3840x2160 for
+   {auto, vga, nes} — that is the disk cost of cached normal variants.
+4. Docs:
+   - docs/PERF.md: walk back S3's "normal doesn't reach this today" bullet —
+     the settled rule, the 4K one-time numbers, the full-size PNG sizes, each
+     with script + commit (walk-back rule applies);
+   - docs/CLI.md: palette/dither rows gain the normal note — full-canvas,
+     one-time + cached; (auto, none) is the v0.1-identical default; off +
+     dither is inert;
+   - PLAN-30-ct.md: reword A.1/A.2's normal paragraphs to the settled rule
+     (the plan is a living doc; S9 records the retro);
+   - CHANGELOG [Unreleased] bullet.
+
+ACCEPTANCE:
+- Every v0.1 configuration (palette true or false, any preset) produces
+  byte-identical output to v0.1 — the two normal identity tests plus the
+  existing preset tests are the proof;
+- the pixelated-preset path is untouched (its tests/goldens unchanged);
+- cross-cutting gate green;
+- commits small: "pixcore: normal honors quantize except the v0.1 default",
+  "test: normal identity + dither honored", "test: bench-normal + PERF",
+  "docs: CLI/PLAN/CHANGELOG normal rule".
+
+When done, print: the rule as implemented (the exact condition), the 4K
+numbers, the byte-identity test names, and the diffstat.
+```
+
+---
+
 ## S4 — Daemon backend seam (refactor, zero behavior change)
 
 ```
