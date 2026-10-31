@@ -67,3 +67,11 @@ normal`, default 16) on a wlr-layer-shell Background surface, niri-first.
   0, and the bg colour merged in when absent); `off`/`auto` stay RGBA.
   First tests in the crate: CLI round-trips against a hermetic
   `PIXPAPERS_HOME` plus an in-process daemon-socket harness.
+- Measured (PLAN-30 S3, numbers in [docs/PERF.md](docs/PERF.md), scripts
+  `test/bench-dither.sh` / `test/bench-sizes.sh` @ `45c9aa6`): dithering
+  in canvas space costs ≤ +5.6 ms one-time on the largest preset canvas
+  (bayer8 ≤ +0.4 ms); the one-time full-res `vga`+`fs` case is 0.61 s
+  (`auto`+`fs` 1.82 s — over the plan's 1 s line, median-cut-dominated,
+  documented and kept); named palettes land 16–78% *below* auto (none
+  bloats); the v2 default path is byte-identical to v0.1 at fixture
+  scale (blake3-pinned), not just on the goldens.
