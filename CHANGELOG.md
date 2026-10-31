@@ -43,14 +43,29 @@ normal`, default 16) on a wlr-layer-shell Background surface, niri-first.
 ### Known limitations (v0.1, documented)
 - Multi-output & physical hotplug: structurally handled, hardware-untested.
 - Fractional scale renders via the legacy oversampled path (exact-size
-  buffers via viewporter/fractional-scale = v0.2).
+  buffers via viewporter/fractional-scale — planned, still deferred;
+  see [Unreleased]).
 - `stop`/daemon must be re-run per session (exit 43 on session end is
   intentional).
 - 72 h soak (V15) pending.
 
 ## [Unreleased]
-- v0.2 targets: wp_viewporter + wp_fractional_scale_v1 exact buffers;
-  headless-sway CI smoke; multi-monitor hardening from field reports.
+
+v0.2: retro palettes & dithering, an X11 backend, a terminal UI and a
+waybar toolbar module — the four PLAN-30-ct workstreams, landed as
+steps S1–S9. Every number below names the script and commit that
+produced it; the full record is in
+[docs/VERIFICATION.md](docs/VERIFICATION.md) (§S1–S9) and
+[docs/PERF.md](docs/PERF.md).
+
+Not in this entry (still deferred — README "Deliberately not in v0.2",
+AGENTS.md deferred list): exact fractional buffers (the plan stands in
+[docs/SCALING.md](docs/SCALING.md)), a GUI window (the waybar button's
+`on-click` is the slot it flips into), live wallpapers, auto-preset,
+MPRIS-ish hooks, headless-sway CI. Multi-output/multi-monitor behavior
+remains field-report-driven (VERIFICATION V4/V5), as before.
+
+### Added
 - pixcore: quantize stage — palette modes `auto / nes / gb / cga / ega /
   vga / gen16` × dithers `none / fs / atkinson / bayer2 / bayer4 / bayer8`,
   deterministic integer pipeline (12 golden cells checked in).
@@ -90,7 +105,11 @@ normal`, default 16) on a wlr-layer-shell Background surface, niri-first.
   testing. `status` reports the active backend (additive `backend`
   field). A non-24-depth root is a loud exit 1. Daemon start failures
   (no session, bad depth, refused connection) now exit 1 (user error)
-  instead of 2. Ships behind the default-on `x11` cargo feature
+  instead of 2. An X server loss (connection error) is the same
+  **exit 43** contract as the Wayland compositor loss — teardown,
+  socket/pidfile removed, never restart on 43 (machine-tested:
+  `test/verify-x11.sh` kills the Xvfb out from under the daemon).
+  Ships behind the default-on `x11` cargo feature
   (`--no-default-features` = wayland-only slim build; +122 KiB binary).
 - Measured (PLAN-30 S3, numbers in [docs/PERF.md](docs/PERF.md), scripts
   `test/bench-dither.sh` / `test/bench-sizes.sh` @ `45c9aa6`): dithering
@@ -109,11 +128,11 @@ normal`, default 16) on a wlr-layer-shell Background surface, niri-first.
   at startup (kitty graphics APC / iTerm2 OSC 1337 / sixel / none) with
   `PIX_PAPERS_IMAGE` override; a pure sixel encoder lives in pixcore
   (verified against libsixel 1.8.6); 256 KB inline-PNG guard refuses
-  with the reason. Action keys are honest `(S7)` no-ops until S7 wires
-  them. Ships behind the default-on `tui` feature (ratatui + crossterm,
-  +270 KiB release binary, measured). Test plane: 7 ratatui `TestBackend`
-  goldens at a pinned 100×30 + detection/emit/canvas unit tests; live
-  rows in [docs/VERIFICATION.md](docs/VERIFICATION.md).
+  with the reason. Ships behind the default-on `tui` feature
+  (ratatui + crossterm, +270 KiB release binary, measured). Test
+  plane: 7 ratatui `TestBackend` goldens at a pinned 100×30 +
+  detection/emit/canvas unit tests; live rows in
+  [docs/VERIFICATION.md](docs/VERIFICATION.md).
 - **TUI actions** (PLAN-30-ct §C.4–C.5): the full key table on
   `pixpapers tui` — add-by-path (`a`), set (`s`), cycle (`c`),
   pixel/placement/palette/dither cycles (`p`/`l`/`t`/`d`), bg/gutter
@@ -151,3 +170,36 @@ normal`, default 16) on a wlr-layer-shell Background surface, niri-first.
   goldens + offline `smoke.sh` checks; live row (render + flip real,
   click/scroll named skips with exact-command substitutes) in
   [docs/VERIFICATION.md](docs/VERIFICATION.md) §S8.
+
+### Config (all additive — old configs and manifests load unchanged)
+- `palette` is now a string (`auto` default = the v0.1 median-cut look);
+  legacy `palette = true/false` TOML bools still load (true→auto,
+  false→off) and new saves write the string.
+- `dither` is new (`none` default = the v0.1 look).
+- `[daemon] backend` is new (`auto` default: `WAYLAND_DISPLAY` ⇒ layer,
+  else `DISPLAY` ⇒ x11, else exit 1 naming both; explicit `layer`/`x11`
+  override).
+- Manifest entries gain optional `palette`/`dither` (`None` = inherit
+  the config default); old manifests without the fields parse unchanged.
+
+### Dependencies
+- `ratatui` + `crossterm` behind the default-on `tui` feature: **+270
+  KiB** release binary (measured).
+- `x11rb` behind the default-on `x11` feature: **+124,960 B** (+122
+  KiB, +2.9%) release binary (4,304,640 → 4,429,600 B, strip+lto);
+  `--no-default-features` = wayland-only slim build.
+- No new dependencies for the palettes workstream (median-cut already
+  ships; dithering is hand-rolled integer math) or for the waybar
+  module (sh + config).
+
+### Fixed
+- **Exit-code audit** (S9 task 7, `dde4d1f`): user conditions now exit
+  **1** instead of 2 — `cycle` on an empty library (the violation S8
+  recorded), unknown ids on `set` / the per-entry knob commands /
+  `export`, and `export` with an unparseable size. Messages are
+  byte-identical; only the classification changed. Reported, not fixed
+  (outside the authorized scope — VERIFICATION §S9): `export -o` write
+  failure (io) stays 2; clap usage errors stay 2 (framework
+  convention); a second foreground `daemon` while one runs stays 2
+  (bare `bail!` since v0.1 `10dbc8b`) — whose doc claim ("exits 1")
+  was the bug, corrected doc-side in the S9 pass.
