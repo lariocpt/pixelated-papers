@@ -192,6 +192,17 @@ remains field-report-driven (VERIFICATION V4/V5), as before.
   ships; dithering is hand-rolled integer math) or for the waybar
   module (sh + config).
 
+### Changed
+- **x11 stop clears the roots** (`1e79d00`): a graceful stop (and the
+  best-effort exit-43 teardown) now clears every X root window to solid
+  black, so a stopped daemon leaves no stray wallpaper frame on the X
+  server (previously the last frame persisted — e.g. behind X11 windows
+  on Xwayland — until something else drew the root). Teardown cost is
+  one batched fill per screen — measured stop latency unchanged
+  (2/7/7/7/8 ms vs 2/2/8/8/8 ms before, 1024×768 Xvfb, release;
+  `test/verify-x11.sh` asserts AE=0 against a black reference). A hard
+  kill still skips teardown, as before.
+
 ### Fixed
 - **Exit-code audit** (S9 task 7, `dde4d1f`): user conditions now exit
   **1** instead of 2 — `cycle` on an empty library (the violation S8

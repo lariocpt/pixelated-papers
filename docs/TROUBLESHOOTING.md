@@ -58,6 +58,17 @@ dead session: the contrib systemd unit sets
 `RestartPreventExitStatus=43`. Your next `set` in the next session
 respawns it.
 
+### Stale wallpaper on X11 after stopping the daemon
+
+A *graceful* stop (`pixpapers stop`, SIGTERM) clears the root window to
+solid black — the daemon takes the wallpaper with it (`1e79d00`). If
+the last frame still shows, the daemon was killed *ungracefully*
+(`kill -9`, power loss, OOM) so teardown was skipped — or the running
+binary predates v0.2. Clear it with
+`DISPLAY=<your-display> xsetroot -solid black`, or restart the daemon
+and stop it normally. On wayland this cannot happen: destroying the
+layer surface restores the compositor's own background.
+
 ### systemd unit flaps (start/stop/start…)
 
 You put `Restart=always` without `RestartPreventExitStatus=43`, or two

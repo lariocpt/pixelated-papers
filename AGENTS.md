@@ -13,6 +13,8 @@ cargo clippy --workspace --all-targets -- -D warnings   # must stay green
 cargo fmt --check
 env -u WAYLAND_DISPLAY test/smoke.sh        # offline layer (CI-safe, deterministic)
 WAYLAND_DISPLAY=wayland-1 test/verify-live.sh target/release/pixpapers
+test/verify-x11.sh target/release/pixpapers # x11 layer under Xvfb (self-wraps; skips by name)
+test/verify-tui.sh target/release/pixpapers # TUI on a real pty (headless env)
 WAYLAND_DISPLAY=wayland-1 test/verify-waybar.sh
 WAYLAND_DISPLAY=wayland-1 test/bench-daemon.sh target/release/pixpapers 25
 ```
