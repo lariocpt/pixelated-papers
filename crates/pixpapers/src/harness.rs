@@ -3,8 +3,9 @@
 //! round-trips. S7's TUI tests reuse [`DaemonHarness`] the same way.
 //!
 //! Every subprocess runs with `PIXPAPERS_HOME` pointed at a fresh tempdir
-//! and `WAYLAND_DISPLAY` removed, so the CLI can never auto-spawn a real
-//! daemon; the only socket traffic it can produce goes to our listener.
+//! and both `WAYLAND_DISPLAY` and `DISPLAY` removed, so the CLI can never
+//! auto-spawn a real daemon (S5 made `DISPLAY` sufficient for the x11
+//! backend); the only socket traffic it can produce goes to our listener.
 
 use std::io::BufRead;
 use std::io::BufReader;
@@ -67,6 +68,7 @@ impl Home {
             .args(args)
             .env("PIXPAPERS_HOME", &self.root)
             .env_remove("WAYLAND_DISPLAY")
+            .env_remove("DISPLAY")
             .output()
             .unwrap();
         (
