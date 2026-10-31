@@ -281,6 +281,147 @@ fn encode_palette_png(img: &image::RgbaImage, mode: PaletteMode) -> Option<Vec<u
     if ok { Some(buf) } else { None }
 }
 
+/// The full offline render path, shared by `export` and the TUI preview
+/// (PLAN-30 §C.3: the preview is literally a small export, not a
+/// reimplementation): generate-or-cache the variant at `out`, composite
+/// into `out` with the resolved placement/bg (the `view` comes from the
+/// ORIGINAL dims — invariant #2), and encode exactly like export does.
+/// Returns the final image and its PNG bytes.
+pub fn render_offline(
+    paths: &Paths,
+    id: &str,
+    src: (u32, u32),
+    s: &ResolvedSettings,
+    out: (u32, u32),
+) -> Result<(image::RgbaImage, Vec<u8>)> {
+    let (variant_path, _hit) = generate(paths, id, s, out)?;
+    let bytes = fs::read(&variant_path).map_err(|e| PixError::io(&variant_path, e))?;
+    let canvas = decode_any(&bytes)?;
+    let view = crate::placement::view(src, out, s.placement, s.gutter_px);
+    let img = crate::render::composite(&canvas, &view, s.bg_color);
+    let png = encode_final(&img, &canvas, s.palette, s.bg_color);
+    Ok((img, png))
+}
+
+/// The palette `encode_final` should publish for a mode: the mode's exact
+/// fixed table (deduped, first occurrence — the variant encoder's rule),
+/// or for `gen16` the table derived on the canvas the same way the variant
+/// encoder does (`median_cut(16)` snapped to RGB555). `off`/`auto` have no
+/// fixed table (`auto` would need 255 + bg, which does not fit the ≤255
+/// v0.1 scheme).
+fn fixed_palette(mode: PaletteMode, canvas: &image::RgbaImage) -> Option<Vec<image::Rgba<u8>>> {
+    match mode {
+        PaletteMode::Off | PaletteMode::Auto => None,
+        PaletteMode::Gen16 => Some(dedup_first(
+            crate::pipeline::median_cut(canvas, 16)
+                .into_iter()
+                .map(crate::palette::snap_rgb555),
+        )),
+        named => Some(dedup_first(
+            named
+                .fixed_table()
+                .expect("named mode has a table")
+                .iter()
+                .copied(),
+        )),
+    }
+}
+
+/// Encode a final composite as a PNG (moved verbatim from
+/// `pixpapers::commands` so export and the TUI preview share one
+/// encoder — byte-identical to the pre-S6 export bytes). Every quantizing
+/// mode except `auto` writes a true palette PNG (exact table + bg merged
+/// in, v0.1 index-0-transparent convention); `off`/`auto` stay plain
+/// RGBA; encoder trouble falls back to RGBA.
+pub fn encode_final(
+    img: &image::RgbaImage,
+    canvas: &image::RgbaImage,
+    mode: PaletteMode,
+    bg: crate::color::RgbCss,
+) -> Vec<u8> {
+    use image::ImageEncoder as _;
+    let encode_rgba = || {
+        let mut out = Vec::new();
+        let enc = image::codecs::png::PngEncoder::new(&mut out);
+        let _ = enc.write_image(
+            img.as_raw(),
+            img.width(),
+            img.height(),
+            image::ExtendedColorType::Rgba8,
+        );
+        out
+    };
+    let Some(mut pal) = fixed_palette(mode, canvas) else {
+        return encode_rgba();
+    };
+    let bgc = image::Rgba([bg.0[0], bg.0[1], bg.0[2], 255]);
+    if !pal.contains(&bgc) {
+        pal.push(bgc);
+    }
+    if pal.len() <= 255 {
+        if let Some(bytes) = encode_indexed(img, &pal) {
+            return bytes;
+        }
+    }
+    encode_rgba()
+}
+
+/// First-occurrence dedup, same semantics as the variant encoder's.
+fn dedup_first(iter: impl Iterator<Item = image::Rgba<u8>>) -> Vec<image::Rgba<u8>> {
+    let mut out: Vec<image::Rgba<u8>> = Vec::with_capacity(64);
+    for c in iter {
+        if !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Indexed PNG over `pal` with the v0.1 scheme: index 0 is the
+/// transparent placeholder black, palette entries shifted +1. Pixels
+/// already in the palette (quantized canvas colors, bg) map exactly; the
+/// nearest fallback mirrors the variant encoder. `None` on encoder trouble.
+fn encode_indexed(img: &image::RgbaImage, pal: &[image::Rgba<u8>]) -> Option<Vec<u8>> {
+    let mut plte: Vec<u8> = vec![0, 0, 0];
+    for c in pal {
+        plte.extend_from_slice(&[c.0[0], c.0[1], c.0[2]]);
+    }
+    let indices: Vec<u8> = img
+        .pixels()
+        .map(|p| {
+            if p.0[3] <= 8 {
+                return 0u8;
+            }
+            let mut best = 1usize;
+            let mut bestd = u64::MAX;
+            for (i, c) in pal.iter().enumerate() {
+                let dr = p.0[0] as i64 - c.0[0] as i64;
+                let dg = p.0[1] as i64 - c.0[1] as i64;
+                let db = p.0[2] as i64 - c.0[2] as i64;
+                let d = (dr * dr + dg * dg + db * db) as u64;
+                if d < bestd {
+                    bestd = d;
+                    best = i + 1;
+                }
+            }
+            best as u8
+        })
+        .collect();
+    let mut buf = Vec::new();
+    let ok = {
+        let mut enc = png::Encoder::new(&mut buf, img.width(), img.height());
+        enc.set_color(png::ColorType::Indexed);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.set_palette(plte);
+        enc.set_trns(vec![0u8]); // only index 0 is transparent (v0.1 verbatim)
+        match enc.write_header() {
+            Ok(mut w) => w.write_image_data(&indices).is_ok(),
+            Err(_) => false,
+        }
+    };
+    if ok { Some(buf) } else { None }
+}
+
 /// Decode any bytes we accept (used by export/tests).
 pub fn decode_any(bytes: &[u8]) -> Result<image::RgbaImage> {
     let reader = image::ImageReader::new(std::io::Cursor::new(bytes))

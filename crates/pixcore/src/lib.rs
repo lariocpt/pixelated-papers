@@ -17,6 +17,7 @@ pub mod placement;
 pub mod preset;
 pub mod preview;
 pub mod render;
+pub mod sixel;
 pub mod variant;
 
 pub use color::RgbCss;

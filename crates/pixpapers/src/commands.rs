@@ -6,7 +6,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use pixcore::{
-    Config, Dither, Entry, Library, PaletteMode, Paths, Pixel, Placement, ResolvedSettings, RgbCss,
+    Config, Dither, Entry, Library, PaletteMode, Paths, Pixel, Placement, ResolvedSettings,
     Settings,
 };
 
@@ -232,21 +232,19 @@ pub fn export(
         },
         cfg,
     );
-    let (variant_path, _hit) = pixcore::variant::generate(paths, &entry.id, &resolved, out)
-        .map_err(anyhow::Error::from)
-        .with_context(|| format!("entry {} render failed", entry.id))?;
-    let canvas =
-        pixcore::variant::decode_any(&std::fs::read(&variant_path).map_err(anyhow::Error::from)?)
-            .map_err(anyhow::Error::from)?;
-    // view computed from the ORIGINAL dims; canvas stretches into view.dest
-    let view = pixcore::view(
+    // The one offline render path, shared with the TUI preview (S6):
+    // variant generate-or-cache → composite (view from ORIGINAL dims —
+    // invariant #2) → the exact export encoder. Byte-identical to the
+    // pre-S6 export bytes; the moved code is verbatim.
+    let (final_img, buf) = pixcore::variant::render_offline(
+        paths,
+        &entry.id,
         (entry.width, entry.height),
+        &resolved,
         out,
-        resolved.placement,
-        resolved.gutter_px,
-    );
-    let final_img = pixcore::render::composite(&canvas, &view, resolved.bg_color);
-    let buf = encode_final(&final_img, &canvas, resolved.palette, resolved.bg_color);
+    )
+    .map_err(anyhow::Error::from)
+    .with_context(|| format!("entry {} render failed", entry.id))?;
     let dest = dest.map(|p| p.to_path_buf()).unwrap_or_else(|| {
         std::path::PathBuf::from(format!(
             "pixpapers-{}-{}-{}-{}x{}.png",
@@ -277,127 +275,6 @@ fn merge_settings(base: &Settings, over: &Settings) -> Settings {
         palette: over.palette.or(base.palette),
         dither: over.dither.or(base.dither),
     }
-}
-
-/// The palette `encode_final` should publish for a mode: the mode's exact
-/// fixed table (deduped, first occurrence — the variant encoder's rule), or
-/// for `gen16` the table derived on the canvas the same way the variant
-/// encoder does (`median_cut(16)` snapped to RGB555). `off`/`auto` have no
-/// fixed table (`auto` would need 255 + bg, which does not fit the ≤255
-/// v0.1 scheme).
-fn fixed_palette(mode: PaletteMode, canvas: &image::RgbaImage) -> Option<Vec<image::Rgba<u8>>> {
-    match mode {
-        PaletteMode::Off | PaletteMode::Auto => None,
-        pixcore::PaletteMode::Gen16 => Some(dedup_first(
-            pixcore::pipeline::median_cut(canvas, 16)
-                .into_iter()
-                .map(pixcore::palette::snap_rgb555),
-        )),
-        named => Some(dedup_first(
-            named
-                .fixed_table()
-                .expect("named mode has a table")
-                .iter()
-                .copied(),
-        )),
-    }
-}
-
-/// Encode the export's final composite as a PNG. Every quantizing mode
-/// except `auto` writes a true palette PNG — the mode's exact table (for
-/// `gen16`, the per-image table derived on the canvas the same way the
-/// variant encoder does) plus the bg color when it is not already a table
-/// entry — with the v0.1 index-0-transparent convention. `Off` stays plain
-/// RGBA, and `Auto` (255 + bg would not fit the ≤255 v0.1 scheme) does too,
-/// so the v0.1 export shape is preserved byte-for-byte. Encoder trouble
-/// falls back to RGBA, mirroring `pixcore::variant::encode_variant`.
-fn encode_final(
-    img: &image::RgbaImage,
-    canvas: &image::RgbaImage,
-    mode: PaletteMode,
-    bg: RgbCss,
-) -> Vec<u8> {
-    use image::ImageEncoder as _;
-    let encode_rgba = || {
-        let mut out = Vec::new();
-        let enc = image::codecs::png::PngEncoder::new(&mut out);
-        let _ = enc.write_image(
-            img.as_raw(),
-            img.width(),
-            img.height(),
-            image::ExtendedColorType::Rgba8,
-        );
-        out
-    };
-    let Some(mut pal) = fixed_palette(mode, canvas) else {
-        return encode_rgba();
-    };
-    let bgc = image::Rgba([bg.0[0], bg.0[1], bg.0[2], 255]);
-    if !pal.contains(&bgc) {
-        pal.push(bgc);
-    }
-    if pal.len() <= 255 {
-        if let Some(bytes) = encode_indexed(img, &pal) {
-            return bytes;
-        }
-    }
-    encode_rgba()
-}
-
-/// First-occurrence dedup, same semantics as the variant encoder's.
-fn dedup_first(iter: impl Iterator<Item = image::Rgba<u8>>) -> Vec<image::Rgba<u8>> {
-    let mut out: Vec<image::Rgba<u8>> = Vec::with_capacity(64);
-    for c in iter {
-        if !out.contains(&c) {
-            out.push(c);
-        }
-    }
-    out
-}
-
-/// Indexed PNG over `pal` with the v0.1 scheme: index 0 is the
-/// transparent placeholder black, palette entries shifted +1. Pixels
-/// already in the palette (quantized canvas colors, bg) map exactly; the
-/// nearest fallback mirrors the variant encoder. `None` on encoder trouble.
-fn encode_indexed(img: &image::RgbaImage, pal: &[image::Rgba<u8>]) -> Option<Vec<u8>> {
-    let mut plte: Vec<u8> = vec![0, 0, 0];
-    for c in pal {
-        plte.extend_from_slice(&[c.0[0], c.0[1], c.0[2]]);
-    }
-    let indices: Vec<u8> = img
-        .pixels()
-        .map(|p| {
-            if p.0[3] <= 8 {
-                return 0u8;
-            }
-            let mut best = 1usize;
-            let mut bestd = u64::MAX;
-            for (i, c) in pal.iter().enumerate() {
-                let dr = p.0[0] as i64 - c.0[0] as i64;
-                let dg = p.0[1] as i64 - c.0[1] as i64;
-                let db = p.0[2] as i64 - c.0[2] as i64;
-                let d = (dr * dr + dg * dg + db * db) as u64;
-                if d < bestd {
-                    bestd = d;
-                    best = i + 1;
-                }
-            }
-            best as u8
-        })
-        .collect();
-    let mut buf = Vec::new();
-    let ok = {
-        let mut enc = png::Encoder::new(&mut buf, img.width(), img.height());
-        enc.set_color(png::ColorType::Indexed);
-        enc.set_depth(png::BitDepth::Eight);
-        enc.set_palette(plte);
-        enc.set_trns(vec![0u8]); // only index 0 is transparent (v0.1 verbatim)
-        match enc.write_header() {
-            Ok(mut w) => w.write_image_data(&indices).is_ok(),
-            Err(_) => false,
-        }
-    };
-    if ok { Some(buf) } else { None }
 }
 
 pub fn optimize_all(paths: &Paths, cfg: &Config) -> Result<()> {

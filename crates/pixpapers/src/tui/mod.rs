@@ -13,7 +13,9 @@
 //! tokio (the daemon's posture, kept). Alternate screen + raw mode are
 //! armed on entry and restored on exit by a `Drop` guard (panic-safe).
 
+mod detect;
 mod draw;
+mod emit;
 
 use std::io;
 
@@ -26,6 +28,25 @@ use crossterm::terminal::{
 use pixcore::{Config, Library, Paths};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+
+pub use detect::ImageProto;
+
+/// The preview pane's image state (C.3). `Idle` = nothing rendered yet
+/// (or the selection changed); the pane then shows "rendering preview …"
+/// while the blocking render runs, or the fallback text in a
+/// non-image terminal.
+pub enum PreviewState {
+    Idle,
+    Ready {
+        png: Vec<u8>,
+    },
+    /// Encoded preview exceeded the 256 KB inline budget (C.3 guard).
+    Refused {
+        kb: u32,
+    },
+    /// Render failed (missing original, decode trouble, pane too small).
+    Failed(String),
+}
 
 /// Restore the terminal no matter how we leave the loop — normal exit,
 /// `?`-propagated error, or panic on the way out (house rule: panic-safe).
@@ -61,6 +82,19 @@ pub struct App {
     pub last: String,
     /// Socket probe result from startup / `r` refresh.
     pub daemon_up: bool,
+    /// Image-protocol detection (C.3) — startup only, shown as `img:`.
+    pub proto: ImageProto,
+    pub preview: PreviewState,
+    /// Set on selection change / refresh / resize: the next loop pass
+    /// re-renders the preview (never on a timer).
+    preview_dirty: bool,
+    /// The Ready preview still needs its bytes emitted once.
+    emit_pending: bool,
+    /// A kitty image is currently displayed (needs `a=d` before replace).
+    image_on_screen: bool,
+    /// Monotonic kitty image id; `prev` is deleted before each new one.
+    kitty_id: u32,
+    prev_kitty_id: u32,
 }
 
 impl App {
@@ -73,6 +107,13 @@ impl App {
             sel: 0,
             last: "ready".into(),
             daemon_up: false,
+            proto: detect::detect(),
+            preview: PreviewState::Idle,
+            preview_dirty: true,
+            emit_pending: false,
+            image_on_screen: false,
+            kitty_id: 0,
+            prev_kitty_id: 0,
         };
         app.refresh_state()?;
         // Open on the current entry when there is one.
@@ -94,7 +135,15 @@ impl App {
             return;
         }
         let cur = self.sel as i64;
-        self.sel = (((cur + delta).rem_euclid(n)) as usize).min(n as usize - 1);
+        let next = (((cur + delta).rem_euclid(n)) as usize).min(n as usize - 1);
+        if next != self.sel {
+            self.sel = next;
+            // The old preview belongs to the old entry: drop it and mark
+            // dirty so the loop clears the screen image and re-renders.
+            self.preview = PreviewState::Idle;
+            self.preview_dirty = true;
+            self.emit_pending = false;
+        }
     }
 
     /// Re-read manifest + config and re-probe the daemon (`r` refresh —
@@ -106,6 +155,9 @@ impl App {
         if self.sel >= self.lib.entries.len() {
             self.sel = self.lib.entries.len().saturating_sub(1);
         }
+        self.preview = PreviewState::Idle;
+        self.preview_dirty = true;
+        self.emit_pending = false;
         Ok(())
     }
 }
@@ -117,16 +169,104 @@ fn s7_note(key: char) -> String {
     format!("(S7) '{key}' — actions land in S7")
 }
 
+/// The blocking preview render (C.3): literally a small export — the
+/// same `render_offline` the CLI export runs, at the pane canvas. Only
+/// called when the terminal can display an image (proto ≠ None).
+fn render_preview(app: &mut App, canvas: (u32, u32)) {
+    let Some(entry) = app.selected() else {
+        app.preview = PreviewState::Idle;
+        return;
+    };
+    let r = crate::commands::resolve_effective(entry, &app.cfg);
+    match pixcore::variant::render_offline(
+        &app.paths,
+        &entry.id,
+        (entry.width, entry.height),
+        &r,
+        canvas,
+    ) {
+        Ok((_, png)) => {
+            let kb = png.len().div_ceil(1024) as u32;
+            if pixcore::preview::png_over_budget(&png) {
+                app.preview = PreviewState::Refused { kb };
+                app.last = format!("preview too large — {kb} KB, see pane");
+            } else {
+                app.last = format!(
+                    "preview {}×{} · {kb} KB · {}",
+                    canvas.0,
+                    canvas.1,
+                    app.proto.token()
+                );
+                app.preview = PreviewState::Ready { png };
+            }
+        }
+        Err(e) => {
+            app.preview = PreviewState::Failed(e.to_string());
+            app.last = format!("preview failed: {e}");
+        }
+    }
+}
+
 pub fn run(paths: &Paths, cfg: &Config) -> Result<()> {
     let mut app = App::new(paths.clone(), cfg.clone())?;
     let _guard = TerminalGuard::arm()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut term = Terminal::new(backend).context("init terminal")?;
+    let mut sink = emit::Sink::Live;
 
     loop {
         // ratatui 0.30 starts every draw with an absolute MoveTo, so
-        // emitting image sequences between frames (C3) cannot desync it.
-        term.draw(|f| draw::frame(f, &app)).context("draw frame")?;
+        // emitting image sequences between frames cannot desync it.
+        let mut geom = draw::Geom::default();
+        term.draw(|f| geom = draw::frame(f, &app))
+            .context("draw frame")?;
+
+        // (Re)generate the preview when dirty — selection, refresh,
+        // resize. Never on a timer. The render can take seconds (the
+        // `normal` preset quantizes a full-size photo), so the status
+        // bar is redrawn with "rendering preview …" *before* blocking.
+        if app.preview_dirty && app.proto != ImageProto::None && app.selected().is_some() {
+            app.preview_dirty = false;
+            if geom.cols == 0 || geom.rows == 0 {
+                app.preview = PreviewState::Failed("pane too small for a preview".into());
+            } else {
+                if app.image_on_screen {
+                    emit::clear_prev(&mut sink, app.proto, app.prev_kitty_id);
+                    app.image_on_screen = false;
+                    app.prev_kitty_id = 0;
+                }
+                app.last = "rendering preview …".into();
+                term.draw(|f| {
+                    draw::frame(f, &app);
+                })?;
+                render_preview(&mut app, geom.canvas);
+                app.emit_pending = matches!(app.preview, PreviewState::Ready { .. });
+                term.draw(|f| {
+                    draw::frame(f, &app);
+                })?;
+            }
+        }
+
+        // Emit the fresh image once, over the flushed frame, anchored to
+        // the pane area the renderer just reported.
+        if app.emit_pending {
+            app.emit_pending = false;
+            if let PreviewState::Ready { png, .. } = &app.preview {
+                emit::clear_prev(&mut sink, app.proto, app.prev_kitty_id);
+                emit::move_to(&mut sink, geom.anchor.0, geom.anchor.1);
+                app.kitty_id += 1;
+                emit::emit(
+                    &mut sink,
+                    app.proto,
+                    png,
+                    app.kitty_id,
+                    geom.cols,
+                    geom.rows,
+                );
+                app.prev_kitty_id = app.kitty_id;
+                app.image_on_screen = true;
+            }
+        }
 
         let ev = event::read().context("read event")?;
         match ev {
@@ -144,7 +284,8 @@ pub fn run(paths: &Paths, cfg: &Config) -> Result<()> {
                     }
                     KeyCode::Char('l') if ctrl => {
                         // Ctrl-L: repaint (no state change — the terminal
-                        // may have smeared; a full redraw fixes it).
+                        // may have smeared; a full redraw fixes it). The
+                        // displayed image is untouched by a text repaint.
                         term.clear()?;
                     }
                     // C.4 action keys, unwired (plain `l` is the placement
@@ -161,11 +302,13 @@ pub fn run(paths: &Paths, cfg: &Config) -> Result<()> {
                 }
             }
             // Resize → relayout from terminal.size() and re-render the
-            // preview (C.1). The next draw recomputes everything from
-            // `f.area()`, which ratatui refreshes from the backend size.
+            // preview at the new canvas (C.1/C.3).
             Event::Resize(_, _) => {
                 let size = term.size()?;
                 term.resize(ratatui::layout::Rect::new(0, 0, size.width, size.height))?;
+                app.preview = PreviewState::Idle;
+                app.preview_dirty = true;
+                app.emit_pending = false;
             }
             _ => {}
         }
