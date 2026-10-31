@@ -57,6 +57,10 @@ pub struct StatusReport {
     pub default_placement: String,
     pub current: Option<String>,
     pub outputs: Vec<OutputStatus>,
+    /// Active display backend ("layer" | "x11"); None when no daemon
+    /// answered. Additive (§B.3): old clients ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
     pub variants_on_disk: usize,
     pub variant_bytes: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]

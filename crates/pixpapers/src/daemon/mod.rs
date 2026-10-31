@@ -2,9 +2,8 @@
 //! signal wake]. The CLI owns state; the daemon re-reads it on `Apply`.
 //! The loop is backend-agnostic (PLAN-30 §B.1): it drives the active
 //! display backend through `Backend` — pump, poll, pump, render, teardown,
-//! exit 43. The apply-latency bench and the status plumbing stay with the
-//! concrete backend for now (one backend exists; S5's status rework
-//! generalizes them).
+//! exit 43. The apply-latency bench and the status plumbing live behind
+//! the trait (§B.3), so both backends feed the same `status` shape.
 //!
 //! `pump()` runs once *before* the poll as well as after it: the pre-poll
 //! pump flushes the requests the previous tick queued (binds, commits),
@@ -34,6 +33,105 @@ use crate::ipc::{self, Request, Response, StatusReport};
 use backend::Backend;
 use backend::layer::LayerBackend;
 
+/// The daemon could not start because the environment is wrong (no display
+/// session, unsupported screen depth, refused connection). A user error
+/// (exit 1) — distinct from internal errors (exit 2) and from losing the
+/// display mid-run (exit 43).
+#[derive(Debug)]
+pub struct DaemonStartupError(pub String);
+
+impl std::fmt::Display for DaemonStartupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for DaemonStartupError {}
+
+/// The active backend. Exactly one is live per daemon (PLAN-30 §B.1);
+/// selection is §B.3 (`--backend` / `daemon.backend` / auto-detect).
+pub enum ActiveBackend {
+    Layer(Box<LayerBackend>),
+    #[cfg(feature = "x11")]
+    X11(Box<backend::x11::X11Backend>),
+}
+
+impl Backend for ActiveBackend {
+    fn name(&self) -> &'static str {
+        match self {
+            ActiveBackend::Layer(b) => b.name(),
+            #[cfg(feature = "x11")]
+            ActiveBackend::X11(b) => b.name(),
+        }
+    }
+
+    fn poll_fd(&self) -> Option<RawFd> {
+        match self {
+            ActiveBackend::Layer(b) => b.poll_fd(),
+            #[cfg(feature = "x11")]
+            ActiveBackend::X11(b) => b.poll_fd(),
+        }
+    }
+
+    fn pump(&mut self) {
+        match self {
+            ActiveBackend::Layer(b) => b.pump(),
+            #[cfg(feature = "x11")]
+            ActiveBackend::X11(b) => b.pump(),
+        }
+    }
+
+    fn render_all(&mut self, paths: &Paths) {
+        match self {
+            ActiveBackend::Layer(b) => b.render_all(paths),
+            #[cfg(feature = "x11")]
+            ActiveBackend::X11(b) => b.render_all(paths),
+        }
+    }
+
+    fn snapshot(&self) -> Vec<crate::ipc::OutputStatus> {
+        match self {
+            ActiveBackend::Layer(b) => b.snapshot(),
+            #[cfg(feature = "x11")]
+            ActiveBackend::X11(b) => b.snapshot(),
+        }
+    }
+
+    fn bench_counters(&self) -> backend::BenchCounters {
+        match self {
+            ActiveBackend::Layer(b) => b.bench_counters(),
+            #[cfg(feature = "x11")]
+            ActiveBackend::X11(b) => b.bench_counters(),
+        }
+    }
+
+    fn connection_lost(&self) -> bool {
+        match self {
+            ActiveBackend::Layer(b) => b.connection_lost(),
+            #[cfg(feature = "x11")]
+            ActiveBackend::X11(b) => b.connection_lost(),
+        }
+    }
+
+    fn close(&mut self) {
+        match self {
+            ActiveBackend::Layer(b) => b.close(),
+            #[cfg(feature = "x11")]
+            ActiveBackend::X11(b) => b.close(),
+        }
+    }
+}
+
+impl ActiveBackend {
+    fn record_apply(&mut self, ms: u64) {
+        match self {
+            ActiveBackend::Layer(b) => b.state.bench.record_apply(ms),
+            #[cfg(feature = "x11")]
+            ActiveBackend::X11(b) => b.record_apply(ms),
+        }
+    }
+}
+
 /// SIGTERM/SIGINT flip this; the loop checks it every tick and tears down
 /// cleanly. Raw handler: nothing else in the signal path can hang.
 static SHUTDOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
@@ -42,13 +140,14 @@ unsafe extern "C" fn handle_shutdown(_sig: libc::c_int) {
     SHUTDOWN.store(false, std::sync::atomic::Ordering::SeqCst);
 }
 
-pub fn run_foreground(paths: Paths) -> Result<()> {
+pub fn run_foreground(paths: Paths, backend: Option<&str>) -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().filter_or("PIXPAPERS_LOG", "info"))
         .format_timestamp_secs()
         .init();
 
     // ── backend ───────────────────────────────────────────────────────
-    let mut backend = backend::layer::LayerBackend::connect_to_env(paths.clone())?;
+    let mut backend = connect_backend(&paths, backend)?;
+    log::info!("backend: {}", backend.name());
 
     // ── socket (single instance) ──────────────────────────────────────
     let sock = paths.socket_file();
@@ -135,6 +234,34 @@ pub fn run_foreground(paths: Paths) -> Result<()> {
     Ok(())
 }
 
+/// Build the requested backend. `None` keeps the v0.1 behavior (layer);
+/// §B.3's auto-detect/config selection lands on top of this seam.
+/// Every failure here is a user error (exit 1), never an internal one.
+fn connect_backend(paths: &Paths, backend: Option<&str>) -> Result<ActiveBackend> {
+    match backend {
+        None | Some("layer") => LayerBackend::connect_to_env(paths.clone())
+            .map(|b| ActiveBackend::Layer(Box::new(b)))
+            .map_err(|e| anyhow::Error::new(DaemonStartupError(e.to_string()))),
+        Some("x11") => {
+            #[cfg(feature = "x11")]
+            {
+                backend::x11::X11Backend::connect_to_env(paths.clone())
+                    .map(|b| ActiveBackend::X11(Box::new(b)))
+                    .map_err(anyhow::Error::new)
+            }
+            #[cfg(not(feature = "x11"))]
+            {
+                Err(anyhow::Error::new(DaemonStartupError(
+                    "this build has no x11 backend (the `x11` feature is off)".into(),
+                )))
+            }
+        }
+        Some(other) => Err(anyhow::Error::new(DaemonStartupError(format!(
+            "unknown backend {other:?} (expected layer or x11)"
+        )))),
+    }
+}
+
 /// Stale-socket-safe bind prep: if a live daemon owns the socket, error;
 /// else unlink the corpse.
 fn prepare_socket(sock: &Path) -> Result<()> {
@@ -152,7 +279,7 @@ fn prepare_socket(sock: &Path) -> Result<()> {
 
 /// Accept + serve one client (read a line, act, reply, close). Returns
 /// true when the client asked the daemon to quit.
-fn handle_client(listener: &UnixListener, backend: &mut LayerBackend, paths: &Paths) -> bool {
+fn handle_client(listener: &UnixListener, backend: &mut ActiveBackend, paths: &Paths) -> bool {
     let (stream, _) = match listener.accept() {
         Ok(s) => s,
         Err(_) => return false,
@@ -181,13 +308,9 @@ fn handle_client(listener: &UnixListener, backend: &mut LayerBackend, paths: &Pa
         Request::Apply => {
             let t0 = std::time::Instant::now();
             backend.render_all(paths);
-            // The bench lives with the backend that owns the render path
-            // (S4: one backend; S5's status rework moves this behind the
-            // trait).
-            backend
-                .state
-                .bench
-                .record_apply(t0.elapsed().as_millis() as u64);
+            // The bench lives behind the trait (§B.3); both backends feed
+            // the same counters into `status --bench`.
+            backend.record_apply(t0.elapsed().as_millis() as u64);
             let _ = reply(&stream, &Response::ok(None));
             false
         }
@@ -208,10 +331,11 @@ fn reply(stream: &std::os::unix::net::UnixStream, r: &Response) -> std::io::Resu
     (&*stream).write_all(&bytes)
 }
 
-fn status_report(backend: &LayerBackend, paths: &Paths) -> StatusReport {
+fn status_report(backend: &ActiveBackend, paths: &Paths) -> StatusReport {
     let cfg = Config::load(&paths.config_file).unwrap_or_default();
     let lib = pixcore::Library::load(paths).ok().unwrap_or_default();
     let outputs = backend.snapshot();
+    let b = backend.bench_counters();
     StatusReport {
         daemon_running: true,
         daemon_pid: Some(std::process::id()),
@@ -220,17 +344,18 @@ fn status_report(backend: &LayerBackend, paths: &Paths) -> StatusReport {
         default_placement: cfg.default_placement.to_string(),
         current: lib.current,
         outputs,
+        backend: Some(backend.name().to_string()),
         variants_on_disk: 0, // cheap scan done in status.rs against shared FS
         variant_bytes: 0,
         bench: Some(crate::ipc::BenchReport {
-            applies: backend.state.bench.applies,
-            last_switch_ms: backend.state.bench.last_switch_ms,
-            switch_median_ms: backend.state.bench.switch_median_ms(),
-            switch_max_ms: backend.state.bench.switch_max_ms(),
-            render_median_ms: backend.state.bench.render_median_ms(),
-            render_max_ms: backend.state.bench.render_max_ms(),
-            variant_hits: backend.state.bench.hits,
-            variant_misses: backend.state.bench.misses,
+            applies: b.applies,
+            last_switch_ms: b.last_switch_ms,
+            switch_median_ms: b.switch_median_ms,
+            switch_max_ms: b.switch_max_ms,
+            render_median_ms: b.render_median_ms,
+            render_max_ms: b.render_max_ms,
+            variant_hits: b.variant_hits,
+            variant_misses: b.variant_misses,
             rss_kb: self_rss_kb(),
             fds: self_fds(),
         }),

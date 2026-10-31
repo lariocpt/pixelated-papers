@@ -13,6 +13,13 @@ use pixcore::{
 /// Exit-code classifier: user errors (bad id, bad value, undecodable file)
 /// exit 1; internal trouble exits 2.
 pub fn is_user_error(e: &anyhow::Error) -> bool {
+    // Daemon start failures are environment problems (no session, bad
+    // depth, refused connection) — user error, exit 1.
+    if e.downcast_ref::<crate::daemon::DaemonStartupError>()
+        .is_some()
+    {
+        return true;
+    }
     if let Some(pe) = e.downcast_ref::<pixcore::PixError>() {
         !matches!(pe, pixcore::PixError::Other(_))
     } else {

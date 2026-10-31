@@ -11,13 +11,27 @@ use pixcore::Paths;
 use crate::ipc::OutputStatus;
 
 pub mod layer;
+#[cfg(feature = "x11")]
+pub mod x11;
+
+/// Rolling render/apply counters, owned by whichever backend renders
+/// (S4 left them behind `LayerBackend`; §B.3's status rework moves them
+/// behind the trait — both backends report through this shape).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BenchCounters {
+    pub applies: u64,
+    pub last_switch_ms: u64,
+    pub switch_median_ms: u64,
+    pub switch_max_ms: u64,
+    pub render_median_ms: u64,
+    pub render_max_ms: u64,
+    pub variant_hits: u64,
+    pub variant_misses: u64,
+}
 
 /// One display backend. The daemon renders on exactly one at a time.
 pub trait Backend {
-    /// Stable backend name. Unused until §B.3 (S5) reports it in
-    /// `status`; the trait keeps its full shape so the seam doesn't move
-    /// again.
-    #[allow(dead_code)]
+    /// Stable backend name; reported in `status` (§B.3).
     fn name(&self) -> &'static str;
 
     /// The fd the supervisor polls for connection events. `None` ⇒ the
@@ -35,6 +49,9 @@ pub trait Backend {
 
     /// Per-output state; feeds `StatusReport.outputs`.
     fn snapshot(&self) -> Vec<OutputStatus>;
+
+    /// Apply/render counters for `status --bench` (see [`BenchCounters`]).
+    fn bench_counters(&self) -> BenchCounters;
 
     /// The display server went away (compositor restart / session end).
     /// The supervisor tears down and exits 43 — never restart-on-43.
