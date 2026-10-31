@@ -5,11 +5,13 @@ Cargo.lock.bak
 .direnv
 .env
 
-# rendered images anywhere except committed docs/screens and test goldens
+# rendered images anywhere except committed docs/screens, test goldens and
+# the website's own assets under docs/img
 *.png
 *.jpg
 *.jpeg
 *.webp
 !docs/screens/**
+!docs/img/**
 !crates/**/tests/golden/**
 !test/fixture.png

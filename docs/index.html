@@ -3,159 +3,410 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>pixelated-papers — forced-pixelation wallpapers for wayland</title>
-<meta name="description" content="Every wallpaper gets pixelated: block sizes 8–128px, four placements, originals stored, variants cached at the absolute minimum size. Rust, wlr-layer-shell, niri-first.">
+<title>pixelated-papers — forced pixelation wallpapers for Linux</title>
+<meta name="description" content="A wallpaper daemon that always pixelates: nearest-neighbour blocks from 8 to 128 px, NES/Game Boy/CGA/EGA/VGA palettes with five dither kernels, per-wallpaper knobs, a TUI, a waybar button, and exact PNG exports. Rust, daemon-based, Wayland and X11.">
 <meta name="color-scheme" content="light dark">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23101418'/%3E%3Crect x='2' y='2' width='12' height='12' fill='%23f7b32b'/%3E%3Crect x='18' y='18' width='12' height='12' fill='%233572d8'/%3E%3Crect x='18' y='2' width='12' height='12' fill='%2339c08f'/%3E%3C/svg%3E">
 <meta property="og:title" content="pixelated-papers">
-<meta property="og:description" content="Forced-pixelation wallpapers for niri and other wayland compositors. 6 KB variants, 45 ms switches.">
+<meta property="og:description" content="Forced pixelation wallpapers: block sizes, retro palettes, dithering, per-wallpaper knobs. Wayland + X11, MIT.">
 <meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230f1114'/%3E%3Crect x='2' y='2' width='5' height='5' fill='%23f7b32b'/%3E%3Crect x='9' y='2' width='5' height='5' fill='%2339c08f'/%3E%3Crect x='2' y='9' width='5' height='5' fill='%233572d8'/%3E%3Crect x='9' y='9' width='5' height='5' fill='%23e2574c'/%3E%3C/svg%3E">
 <style>
-*,*::before,*::after{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%}
-body,h1,h2,h3,p,figure,dl,dd,pre{margin:0}
-img,svg{max-width:100%;display:block}
-table{border-collapse:collapse}
-:root{
-  --ground:#101418; --panel:#171d23; --panel-2:#1e262e; --line:#2a343e;
-  --ink:#e8eef2; --dim:#9fb0bc; --accent:#f7b32b; --accent-2:#39c08f; --accent-3:#3572d8;
-  --mono:ui-monospace,"JetBrains Mono","Fira Code",Menlo,Consolas,monospace;
-  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+/* pixelated-papers project page.
+   Single file. Zero external requests: no webfonts, no CDN, no analytics.
+   Complete with JavaScript disabled — the only script is an optional hero
+   cycler. Chrome and rules follow the color-terminal project page; the
+   committed images under img/ are the documented deviation (this is a
+   visual tool). See /WEBSITE.md. */
+:root {
+  --bg: #e9eaec;
+  --fg: #16181d;
+  --fg-muted: #5c6270;
+  --panel: #fcfcfd;
+  --panel-deep: #f1f2f4;
+  --rule: #d4d6db;
+  --rule-firm: #bfc2c9;
+  --link: #2456a6;
+  --accent: #b4750a;
+  --ok: #2c7a4b;
+  --code-bg: #14161b;
+  --code-fg: #d9dce2;
+  --code-faint: #8b93a1;
+  --code-key: #d8b36b;
+  --shadow: 0 1px 2px rgba(20, 22, 26, .06), 0 8px 24px rgba(20, 22, 26, .07);
+  --font-prose: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono",
+    Menlo, Consolas, monospace;
 }
-@media (prefers-color-scheme: light){
-  :root{
-    --ground:#f4f1ea; --panel:#fffdf8; --panel-2:#ece7dc; --line:#d8d2c4;
-    --ink:#1c2126; --dim:#5d6b76; --accent:#b4750a; --accent-2:#177a55; --accent-3:#2b5ea8;
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1114;
+    --fg: #dfe1e6;
+    --fg-muted: #9096a3;
+    --panel: #15181d;
+    --panel-deep: #101318;
+    --rule: #262a31;
+    --rule-firm: #363b45;
+    --link: #7aa7e0;
+    --accent: #e0a13c;
+    --ok: #67c28f;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px rgba(0, 0, 0, .35);
   }
 }
-body{background:var(--ground);color:var(--ink);font-family:var(--sans);line-height:1.55}
-.wrap{max-width:1000px;margin:0 auto;padding:0 20px}
-header{padding:64px 0 40px}
-.logo{font-family:var(--mono);font-size:.95rem;letter-spacing:.08em;color:var(--accent);text-transform:lowercase}
-h1{font-size:clamp(1.9rem,4.5vw,3rem);line-height:1.12;margin:.45em 0 .35em;letter-spacing:-.01em}
-.lede{color:var(--dim);font-size:1.13rem;max-width:56ch}
-.lede b{color:var(--ink)}
-.cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:26px}
-a.btn{font-family:var(--mono);font-size:.9rem;text-decoration:none;padding:10px 18px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
-a.btn.hot{background:var(--accent);border-color:var(--accent);color:#101418;font-weight:700}
-@media (prefers-color-scheme: light){ a.btn.hot{color:#fffdf8} }
-a.btn:hover{border-color:var(--accent)}
-.blocks{display:flex;gap:3px;margin:38px 0 8px}
-.blocks i{width:14px;height:14px}
-section{padding:44px 0;border-top:1px solid var(--line)}
-h2{font-size:1.35rem;margin-bottom:14px}
-h2 .hash{color:var(--accent);font-family:var(--mono);margin-right:8px}
-p+p{margin-top:10px}
-p{max-width:70ch}
-pre{background:var(--panel);border:1px solid var(--line);padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:.86rem;line-height:1.7;margin-top:16px}
-code{font-family:var(--mono);font-size:.92em;background:var(--panel-2);padding:1px 5px}
-pre code{background:none;padding:0}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-top:18px}
-.card{background:var(--panel);border:1px solid var(--line);padding:16px}
-.card h3{font-size:.98rem;font-family:var(--mono);color:var(--accent-2);margin-bottom:6px}
-.card p{color:var(--dim);font-size:.92rem}
-table{width:100%;margin-top:16px;font-size:.92rem}
-th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);font-family:var(--mono)}
-th{color:var(--dim);font-weight:600}
-td b{color:var(--accent)}
-figure{margin-top:22px}
-figure img{border:1px solid var(--line);width:100%}
-figcaption{color:var(--dim);font-size:.85rem;margin-top:8px;font-family:var(--mono)}
-ul.docs{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;margin-top:14px}
-ul.docs a{color:var(--accent-3);text-decoration:none;font-family:var(--mono);font-size:.9rem}
-ul.docs a:hover{text-decoration:underline}
-.fine{color:var(--dim);font-size:.85rem;margin-top:14px}
-footer{border-top:1px solid var(--line);padding:34px 0 60px;color:var(--dim);font-size:.88rem}
-footer a{color:var(--accent-3)}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-prose);
+  font-size: 16px;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+  margin: 0;
+}
+.wrap { max-width: 46rem; margin: 0 auto; padding: 0 1.25rem; }
+img { max-width: 100%; height: auto; }
+a { color: var(--link); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+h1 { font-family: var(--font-mono); font-size: 1.55rem; font-weight: 600; letter-spacing: -.01em; margin: 0 0 .5rem; }
+h2 {
+  font-family: var(--font-mono);
+  font-size: 1.02rem;
+  font-weight: 600;
+  color: var(--fg-muted);
+  margin: 0 0 .85rem;
+}
+h2 .h { color: var(--accent); }
+p { margin: 0 0 1rem; max-width: 42rem; }
+code, pre, .k { font-family: var(--font-mono); }
+code { font-size: .87em; }
+pre {
+  background: var(--code-bg);
+  color: var(--code-fg);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: .85rem 1rem;
+  overflow-x: auto;
+  font-size: .82rem;
+  line-height: 1.75;
+  margin: 0 0 1rem;
+}
+pre .p { color: var(--code-faint); user-select: none; }
+pre .c { color: var(--code-faint); }
+kbd {
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  border: 1px solid var(--rule-firm);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: .05rem .4rem;
+  background: var(--panel);
+}
+.masthead { padding: 3.5rem 0 1.75rem; }
+.tagline { margin: 0; color: var(--fg-muted); font-size: 1.05rem; max-width: 36rem; }
+.cta { display: flex; gap: .6rem; flex-wrap: wrap; margin: 1.25rem 0 0; }
+.btn {
+  display: inline-block;
+  padding: .5rem .95rem;
+  border-radius: 9px;
+  border: 1px solid var(--rule-firm);
+  background: var(--panel);
+  color: var(--fg);
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-size: .84rem;
+}
+.btn.hot { border-color: var(--rule-firm); background: var(--fg); color: var(--bg); }
+section { padding: 1.9rem 0 .6rem; border-top: 1px solid var(--rule); }
+figure { margin: 1rem 0 1.25rem; }
+figure img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  image-rendering: pixelated;
+}
+figcaption {
+  font-family: var(--font-mono);
+  font-size: .74rem;
+  color: var(--fg-muted);
+  margin-top: .5rem;
+}
+.dl { margin: 0; }
+.dl > div { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: 0 1rem; padding: .5rem 0; border-top: 1px solid var(--rule); }
+.dl > div:first-child { border-top: 0; }
+.dl dt { font-family: var(--font-mono); font-size: .82rem; color: var(--accent); }
+.dl dd { margin: 0; font-size: .93rem; }
+.sw { display: inline-flex; vertical-align: -.12em; margin-right: .15rem; }
+.sw i { width: .72em; height: .72em; display: inline-block; }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; margin: 0 0 1rem; }
+th, td { text-align: left; padding: .42rem .6rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-family: var(--font-mono); font-size: .74rem; text-transform: lowercase; letter-spacing: .04em; color: var(--fg-muted); }
+td .k { font-size: .82rem; }
+.num { font-family: var(--font-mono); color: var(--ok); }
+.fine { font-size: .84rem; color: var(--fg-muted); }
+footer {
+  margin-top: 2.75rem;
+  padding: 1.5rem 0 3.5rem;
+  border-top: 1px solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  color: var(--fg-muted);
+}
+footer a { color: var(--fg-muted); }
+@media (max-width: 360px) {
+  body { font-size: 15px; }
+  .masthead { padding-top: 2.25rem; }
+  .dl > div { grid-template-columns: 1fr; gap: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
 </style>
 </head>
 <body>
-<header class="wrap">
-  <div class="logo">▚▚ pixelated-papers</div>
-  <h1>Every wallpaper.<br>Pixelated. Forced.</h1>
-  <p class="lede">A tiny Rust daemon for <b>niri</b> and other wayland compositors:
-  set a wallpaper and it arrives in literal pixel blocks — <b>8·16·32·64·128</b>.
-  Originals are kept; what gets displayed is a cached render the size of an
-  email attachment.</p>
-  <div class="blocks" aria-hidden="true">
-    <i style="background:var(--accent)"></i><i style="background:var(--accent-3)"></i><i style="background:var(--accent-2)"></i><i style="background:var(--accent)"></i><i style="background:var(--accent-3)"></i><i style="background:var(--accent-2)"></i><i style="background:var(--accent)"></i><i style="background:var(--accent-3)"></i><i style="background:var(--accent-2)"></i><i style="background:var(--accent)"></i><i style="background:var(--accent-3)"></i><i style="background:var(--accent-2)"></i>
-  </div>
-  <div class="cta">
-    <a class="btn hot" href="https://github.com/lariocpt/pixelated-papers">GitHub</a>
-    <a class="btn" href="https://github.com/lariocpt/pixelated-papers/releases">v0.1.0 release</a>
-    <a class="btn" href="CLI.md">CLI reference</a>
-  </div>
-</header>
 
-<section class="wrap">
-  <h2><span class="hash">##</span>Two commands to the look</h2>
-  <pre><code>$ cargo install --path crates/pixpapers
-$ pixpapers add ~/Pictures/nebula.png
-$ pixpapers set &lt;id&gt;        # daemon auto-starts — on screen in ~90 ms</code></pre>
-  <p class="fine">niri needs no config stanza. Prefer systemd?
-  <code>contrib/pixpapers.service</code> ships with the logout flap guard
-  (<code>RestartPreventExitStatus=43</code>).</p>
-</section>
+<div class="masthead">
+  <div class="wrap">
+    <h1>pixelated-papers</h1>
+    <p class="tagline">
+      A wallpaper daemon that <strong>always pixelates</strong>. Set an image and
+      your desktop becomes nearest-neighbour blocks — 8 to 128&nbsp;px — with retro
+      palettes, five dither kernels and exact PNG exports. Rust, one daemon,
+      Wayland and X11.
+    </p>
+    <div class="cta">
+      <a class="btn hot" href="https://github.com/lariocpt/pixelated-papers">GitHub</a>
+      <a class="btn" href="https://github.com/lariocpt/pixelated-papers/releases/tag/v0.2.0">v0.2.0</a>
+      <a class="btn" href="CLI.md">CLI reference</a>
+    </div>
+  </div>
+</div>
 
-<section class="wrap">
-  <h2><span class="hash">##</span>The knobs are per wallpaper</h2>
-  <pre><code>$ pixpapers pixel     &lt;id&gt; 8|16|32|64|128|normal   # block size (default 16)
-$ pixpapers placement &lt;id&gt; fit|cover-gutter|cover-crop|stretch
-$ pixpapers bg        &lt;id&gt; "#1a2b3c"               # borders &amp; gutter
-$ pixpapers export    &lt;id&gt; 3840x2160 --pixel 8 -o /tmp/p.png  # exact preview</code></pre>
-  <figure>
-    <img src="screens/step8/grid-6x4.png" alt="Six pixel presets by four placements on one sunset image" loading="lazy">
-    <figcaption>6 presets × 4 placements — one source image. The export command renders exactly what the daemon draws, so previews never lie.</figcaption>
+<div class="wrap">
+
+  <figure id="hero" style="margin-top:1.75rem">
+    <img id="hero-img" src="img/grid-nes-fs.png" width="480" height="270" alt="A sunset photo rendered as 16 px pixel blocks in the NES 2C02 palette with Floyd–Steinberg dithering">
+    <figcaption><span id="hero-cap">nes palette · floyd-steinberg</span> — one photo, one machine's colours.</figcaption>
   </figure>
-</section>
 
-<section class="wrap">
-  <h2><span class="hash">##</span>Fast, measured — not vibes</h2>
-  <table>
-    <tr><th>what</th><th>measured (niri 26.04 · 4K · scale 1.5)</th></tr>
-    <tr><td>cold set → pixels on screen</td><td><b>91 ms</b></td></tr>
-    <tr><td>hot switch p50 / p95</td><td><b>23 / 45 ms</b></td></tr>
-    <tr><td>variant on disk (1080p photo @ 16)</td><td><b>6.3 KB</b> — 310× smaller than the original</td></tr>
-    <tr><td>idle daemon footprint</td><td><b>4.4 MB · 5 fds</b></td></tr>
-  </table>
-  <p class="fine">Every number is reproducible — <code>cargo bench</code>,
-  <code>test/bench-daemon.sh</code>, <code>pixpapers status --bench</code>.
-  Where a claim washes out (flat-art, <code>normal</code>, steady-state
-  buffers) the docs walk it back explicitly: <a style="color:var(--accent-3)" href="PERF.md">PERF.md</a>
-  and <a style="color:var(--accent-3)" href="VERIFICATION.md">VERIFICATION.md</a>.</p>
-</section>
+  <section aria-label="What it does">
+    <h2><span class="h">##</span> what it does</h2>
+    <p>
+      Every image in the library renders through the same pipeline: scale down to
+      block size, optionally quantise to a palette with dithering, stretch back up
+      with nearest-neighbour. Nothing you set escapes it — that is the whole point.
+      The daemon keeps originals, caches one tiny render per setting, and answers
+      <code>add</code> / <code>set</code> / <code>cycle</code> over a local socket,
+      auto-starting on first use.
+    </p>
+    <figure>
+      <img src="img/source.png" width="1600" height="900" alt="Unprocessed source image: a synthetic sunset with a large sun over two mountain ridges under a starry sky" loading="lazy">
+      <figcaption>the source — 1600×900, unprocessed.</figcaption>
+    </figure>
+    <figure>
+      <img src="img/zoom.png" width="320" height="180" alt="Extreme close-up of the rendered wallpaper showing solid square colour blocks with crisp edges" loading="lazy">
+      <figcaption>close-up of a render: crisp blocks, no smoothing, no blur.</figcaption>
+    </figure>
+  </section>
 
-<section class="wrap">
-  <h2><span class="hash">##</span>How it works</h2>
-  <div class="grid">
-    <div class="card"><h3>cli owns state</h3><p>Atomic config + versioned manifest; the daemon is a pure renderer that re-reads truth on every apply. Kill it — the next command respawns it (54 ms).</p></div>
-    <div class="card"><h3>minimum variants</h3><p>Pixelated look = tiny canvas. The daemon caches palette-PNG renders (kilobytes) per preset/placement/output and stretches them nearest-neighbour onto a layer-shell background surface.</p></div>
-    <div class="card"><h3>forced by design</h3><p>No per-set opt-out you forget: pixelation applies to everything the tool sets. The only exits are <code>normal</code> per wallpaper or <code>disable</code> globally.</p></div>
-    <div class="card"><h3>session-aware</h3><p>Compositor goes away (logout, niri restart) → clean teardown, exit 43, no flap, no stale socket. Supervisors can tell “session ended” from “crashed”.</p></div>
+  <section aria-label="Palettes and dithering">
+    <h2><span class="h">##</span> palettes &amp; dither</h2>
+    <p>
+      Same image, same blocks — different machines. By default the palette is
+      generated from the image itself (<code>auto</code>: median-cut, up to 256
+      colours) with dithering off; the retro tables below are per-entry opt-ins:
+    </p>
+    <dl class="dl" role="list">
+      <div role="listitem"><dt><span class="sw" aria-hidden="true"><i style="background:#7c7c7c"></i><i style="background:#0000fc"></i><i style="background:#940084"></i><i style="background:#a80020"></i></span>nes</dt><dd>NES 2C02 PPU hardware table — 55 distinct colours across 64 codes.</dd></div>
+      <div role="listitem"><dt><span class="sw" aria-hidden="true"><i style="background:#0f380f"></i><i style="background:#306230"></i><i style="background:#8bac0f"></i><i style="background:#9bbc0f"></i></span>gb</dt><dd>Game Boy (DMG) — the four canonical greens off a real screen.</dd></div>
+      <div role="listitem"><dt><span class="sw" aria-hidden="true"><i style="background:#00aaaa"></i><i style="background:#aa5500"></i><i style="background:#ff5555"></i><i style="background:#ffffff"></i></span>cga</dt><dd>IBM CGA 16-colour RGBI set, brown at index 6 included.</dd></div>
+      <div role="listitem"><dt><span class="sw" aria-hidden="true"><i style="background:#00aa55"></i><i style="background:#55ffaa"></i><i style="background:#ffaa00"></i><i style="background:#ff00ff"></i></span>ega</dt><dd>EGA 64-colour cube — two digital bits per gun, DAC levels 00/55/AA/FF.</dd></div>
+      <div role="listitem"><dt><span class="sw" aria-hidden="true"><i style="background:#000000"></i><i style="background:#aa5500"></i><i style="background:#ff0000"></i><i style="background:#ffffff"></i></span>vga</dt><dd>DOS/VGA 256-colour default palette (the Allegro / DOSBox table).</dd></div>
+      <div role="listitem"><dt><span class="sw" aria-hidden="true"><i style="background:#101021"></i><i style="background:#7b5242"></i><i style="background:#ad9473"></i><i style="background:#ffe7c6"></i></span>gen16</dt><dd>generated per image — median-cut 16, snapped onto the RGB555 grid.</dd></div>
+    </dl>
+    <p>
+      Dither kernels: <code>none</code>, <code>fs</code> (Floyd–Steinberg),
+      <code>atkinson</code> (the Macintosh bitmap), <code>bayer2</code> ·
+      <code>bayer4</code> · <code>bayer8</code> (ordered).
+    </p>
+    <figure>
+      <img src="img/grid-vga-fs.png" width="480" height="270" alt="Sunset rendered as pixel blocks limited to the xterm 256-colour palette with Floyd–Steinberg dithering" loading="lazy">
+      <figcaption>vga + floyd-steinberg. <code>pixpapers export</code> renders these
+      with the exact same code the daemon draws — previews cannot lie.</figcaption>
+    </figure>
+  </section>
+
+  <section aria-label="Where it runs">
+    <h2><span class="h">##</span> where it runs</h2>
+    <p>
+      <strong>Wayland</strong> draws a true background layer
+      (<code>zwlr_layer_shell_v1</code> under the bars) — niri is the daily driver
+      it is developed against; other wlr-layer-shell compositors follow the same
+      standard surface. <strong>X11</strong> renders onto the root window as a
+      normal wallpaper client, headless-testable under Xvfb, and clears the root
+      again when it stops. One daemon serves whichever session it was started in.
+    </p>
+    <figure>
+      <img src="img/waybar.png" width="1920" height="36" alt="Waybar strip showing the pixpapers button between the media button and the clock" loading="lazy">
+      <figcaption>the module as it really appears in waybar — a plain
+      <code>custom</code> button, no patched bar, no protocol beyond the CLI.</figcaption>
+    </figure>
+  </section>
+
+  <section aria-label="Terminal UI">
+    <h2><span class="h">##</span> in the terminal</h2>
+    <p>
+      <code>pixpapers tui</code> — library on the left, live preview (true blocks,
+      or a Sixel image in a terminal that speaks it) on the right. It talks to the
+      library directly, so it works with the daemon stopped: pick an entry, nudge
+      the knobs, <kbd>a</kbd> applies.
+    </p>
+    <table>
+      <tr><td><kbd>j</kbd> <kbd>k</kbd></td><td>move through the library</td><td><kbd>Enter</kbd></td><td>set current now</td></tr>
+      <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>block size up / down</td><td><kbd>p</kbd></td><td>cycle palette</td></tr>
+      <tr><td><kbd>g</kbd></td><td>cycle placement</td><td><kbd>d</kbd></td><td>cycle dither</td></tr>
+      <tr><td><kbd>s</kbd></td><td>cycle background</td><td><kbd>a</kbd></td><td>apply current entry</td></tr>
+    </table>
+  </section>
+
+  <section aria-label="Fast and small">
+    <h2><span class="h">##</span> fast and small</h2>
+    <p>
+      A 16-block 1080p render is a 120×68 image — a few kilobytes — cached per
+      entry, setting and output, addressed by content hash. Switches are a hot
+      round-trip, not a render. Numbers are reproducible
+      (<code>cargo bench</code>, <code>test/bench-daemon.sh</code>,
+      <code>pixpapers status --bench</code>):
+    </p>
+    <table>
+      <tr><th>measured · niri 26.04 · 4K · scale 1.5</th><th></th></tr>
+      <tr><td>cold set → pixels on screen</td><td class="num">91 ms</td></tr>
+      <tr><td>hot switch p50 / p95</td><td class="num">23 / 45 ms</td></tr>
+      <tr><td>variant on disk (1080p photo @ 16)</td><td class="num">6.3 KB</td></tr>
+      <tr><td>idle daemon footprint</td><td class="num">4.4 MB · 5 fds</td></tr>
+    </table>
+    <p class="fine">
+      Honest limits, measured too: flat-art sources wash out to one or two blocks;
+      <code>normal</code> (no pixelation) reuses a 1/8-scale render and can visibly
+      soften; the waybar label refreshes on daemon changes, not on external config
+      edits. All recorded in
+      <a href="VERIFICATION.md">VERIFICATION.md</a> and
+      <a href="PERF.md">PERF.md</a>.
+    </p>
+  </section>
+
+  <section aria-label="Install and run">
+    <h2><span class="h">##</span> install and run</h2>
+    <pre><code><span class="p">$ </span>git clone https://github.com/lariocpt/pixelated-papers
+<span class="p">$ </span>cd pixelated-papers &amp;&amp; cargo build --release
+<span class="p">$ </span>install -Dm755 target/release/pixpapers ~/.local/bin/pixpapers
+
+<span class="p">$ </span>pixpapers add ~/Pictures/sunset.png        <span class="c"># auto-index, blake3 id</span>
+<span class="p">$ </span>pixpapers set 1fbb1234                   <span class="c"># daemon auto-starts</span>
+<span class="p">$ </span>pixpapers pixel 1fbb1234 32              <span class="c"># blocks, palettes, dither…</span>
+<span class="p">$ </span>pixpapers palette 1fbb1234 nes
+<span class="p">$ </span>pixpapers dither  1fbb1234 fs
+<span class="p">$ </span>pixpapers export  1fbb1234 3840x2160 -o preview.png
+
+<span class="p">$ </span>pixpapers tui                            <span class="c"># browse, tweak, apply</span></code></pre>
+    <p class="fine">
+      niri needs no config stanza — the layer covers full-size outputs without
+      one. For systemd, <code>contrib/pixpapers.service</code> ships with
+      the logout-flap guard (<code>RestartPreventExitStatus=1 43</code>). The waybar
+      snippet lives in <code>contrib/waybar/</code>; pregenerated shell
+      completions in <code>contrib/completions/</code>.
+    </p>
+  </section>
+
+  <section aria-label="Documentation">
+    <h2><span class="h">##</span> documentation</h2>
+    <ul class="dl" role="list" style="list-style:none;padding:0">
+      <li role="listitem"><a href="CLI.md">CLI.md</a> — every command and flag (also <code>man docs/man/pixpapers.1</code>)</li>
+      <li role="listitem"><a href="COMPOSITORS.md">COMPOSITORS.md</a> — niri depth, compositor matrix, conflicts</li>
+      <li role="listitem"><a href="SCALING.md">SCALING.md</a> — integer and fractional scale policy</li>
+      <li role="listitem"><a href="PERF.md">PERF.md</a> — measured performance, with the walk-backs</li>
+      <li role="listitem"><a href="TROUBLESHOOTING.md">TROUBLESHOOTING.md</a> — nothing shows / exit 43</li>
+      <li role="listitem"><a href="VERIFICATION.md">VERIFICATION.md</a> — what was actually run, on what</li>
+      <li role="listitem"><a href="https://github.com/lariocpt/pixelated-papers/blob/main/CHANGELOG.md">CHANGELOG</a> — release notes</li>
+    </ul>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <p style="margin:0">
+      pixelated-papers v0.2.0 · MIT OR Apache-2.0 ·
+      <a href="https://github.com/lariocpt/pixelated-papers">github.com/lariocpt/pixelated-papers</a><br>
+      Every palette render on this page came straight out of
+      <code>pixpapers export</code>.
+    </p>
   </div>
-</section>
-
-<section class="wrap">
-  <h2><span class="hash">##</span>Documentation</h2>
-  <ul class="docs">
-    <li><a href="CLI.md">docs/CLI.md — every command &amp; flag</a></li>
-    <li><a href="COMPOSITORS.md">docs/COMPOSITORS.md — niri depth, conflicts</a></li>
-    <li><a href="SCALING.md">docs/SCALING.md — integer &amp; fractional scale</a></li>
-    <li><a href="PERF.md">docs/PERF.md — measured performance</a></li>
-    <li><a href="TROUBLESHOOTING.md">docs/TROUBLESHOOTING.md — nothing shows / exit 43</a></li>
-    <li><a href="VERIFICATION.md">docs/VERIFICATION.md — tested &amp; untested</a></li>
-    <li><a href="PLAN.md">docs/PLAN.md — design &amp; build log</a></li>
-    <li><a href="https://github.com/lariocpt/pixelated-papers/blob/main/CHANGELOG.md">CHANGELOG</a></li>
-  </ul>
-  <p class="fine">Tested with niri 26.04 on a single 4K output; multi-output and
-  other compositors: layer-shell standard surface, expected-but-untested —
-  honesty over marketing. X11: <code>pixpapers export</code> + any wallpaper
-  setter is the supported path.</p>
-</section>
-
-<footer class="wrap">
-  <p>MIT OR Apache-2.0 · © 2026 pixelated-papers contributors ·
-  <a href="https://github.com/lariocpt/pixelated-papers">github.com/lariocpt/pixelated-papers</a></p>
 </footer>
+
+<script>
+/* Optional progressive enhancement only: hero palette cycler. Without JS the
+   hero stays a static image; the whole page is complete either way. Auto-play
+   respects prefers-reduced-motion; the dots always work. */
+(function () {
+  "use strict";
+  var imgs = [
+    ["nes", "img/grid-nes-fs.png", "nes palette · floyd-steinberg"],
+    ["gb", "img/grid-gb-fs.png", "game boy palette · floyd-steinberg"],
+    ["cga", "img/grid-cga-fs.png", "cga 16 · floyd-steinberg"],
+    ["ega", "img/grid-ega-fs.png", "ega 64 · floyd-steinberg"],
+    ["vga", "img/grid-vga-fs.png", "dos vga 256 · floyd-steinberg"],
+    ["gen16", "img/grid-gen16-fs.png", "generated 16 · floyd-steinberg"]
+  ];
+  var hero = document.getElementById("hero");
+  var img = document.getElementById("hero-img");
+  var cap = document.getElementById("hero-cap");
+  if (!hero || !img) { return; }
+  var idx = 0, timer = null;
+  var box = document.createElement("div");
+  box.style.cssText = "display:flex;gap:.5rem;margin-top:.5rem;flex-wrap:wrap";
+  var dots = imgs.map(function (spec, i) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = spec[0];
+    b.setAttribute("aria-label", "show " + spec[0] + " palette");
+    b.style.cssText = "font:600 .72rem/1 ui-monospace,Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:.08em;padding:.35rem .55rem;border-radius:6px;cursor:pointer;background:transparent";
+    b.addEventListener("click", function () { show(i); restart(); });
+    box.appendChild(b);
+    return b;
+  });
+  hero.appendChild(box);
+  function paint() {
+    dots.forEach(function (b, i) {
+      var on = i === idx;
+      b.style.border = "1px solid " + (on ? "var(--rule-firm)" : "var(--rule)");
+      b.style.background = on ? "var(--panel)" : "transparent";
+      b.style.color = on ? "var(--fg)" : "var(--fg-muted)";
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+  }
+  function show(i) {
+    idx = i;
+    var next = new Image();
+    next.onload = function () {
+      img.src = imgs[i][1];
+      if (cap) { cap.textContent = imgs[i][2]; }
+    };
+    next.src = imgs[i][1];
+    paint();
+  }
+  function restart() {
+    if (timer) { clearInterval(timer); timer = null; }
+    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      timer = setInterval(function () { show((idx + 1) % imgs.length); }, 2600);
+    }
+  }
+  show(0);
+  restart();
+})();
+</script>
+
 </body>
 </html>
