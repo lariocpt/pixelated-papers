@@ -21,10 +21,12 @@ HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 FIXTURE="$HERE/fixture.png"
 [ -f "$FIXTURE" ] || { echo "FAIL: test/fixture.png missing"; exit 1; }
 
-# Offline commands never see WAYLAND_DISPLAY: without it `set` records but
-# cannot auto-spawn, so the filesystem-truth layers stay deterministic even
-# when the suite runs inside a live session. The daemon layer opts back in.
-run() { env -u WAYLAND_DISPLAY PIXPAPERS_HOME="$WORK/home" "$@"; }
+# Offline commands see neither WAYLAND_DISPLAY nor DISPLAY: without either,
+# `set` records but cannot auto-spawn, so the filesystem-truth layers stay
+# deterministic even when the suite runs inside a live session. (S5 made
+# DISPLAY sufficient for auto-spawn — the x11 backend — so stripping only
+# WAYLAND_DISPLAY stopped being enough.) The daemon layer opts back in.
+run() { env -u WAYLAND_DISPLAY -u DISPLAY PIXPAPERS_HOME="$WORK/home" "$@"; }
 # Stop any daemon auto-spawn got us a hold of, whatever phase failed.
 trap 'env -u WAYLAND_DISPLAY PIXPAPERS_HOME="$WORK/home" "$BIN" stop >/dev/null 2>&1; rm -rf "$WORK"' EXIT
 say() { printf '  %s\n' "$*"; }
