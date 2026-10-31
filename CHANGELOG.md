@@ -114,3 +114,22 @@ normal`, default 16) on a wlr-layer-shell Background surface, niri-first.
   +270 KiB release binary, measured). Test plane: 7 ratatui `TestBackend`
   goldens at a pinned 100×30 + detection/emit/canvas unit tests; live
   rows in [docs/VERIFICATION.md](docs/VERIFICATION.md).
+- **TUI actions** (PLAN-30-ct §C.4–C.5): the full key table on
+  `pixpapers tui` — add-by-path (`a`), set (`s`), cycle (`c`),
+  pixel/placement/palette/dither cycles (`p`/`l`/`t`/`d`), bg/gutter
+  input lines (`b`/`g`), remove behind a confirm line on the single key
+  `D` (`remove <id>? y/N` — `rm` would collide with `r`, refresh),
+  pixelation toggle (`e`), export to the download dir (`x`), refresh
+  (`r`). Every action runs the same `commands::*` function the CLI
+  subcommand calls and the same Apply seam (invariant #1); status lines
+  carry the CLI's own wording, built from the same data the CLI's
+  prints use — not from stdout capture (libtest intercepts `println!`
+  at the Rust level, so an fd-level capture is empty in-process; the
+  alt-screen drain of fd 1+2 stays so the CLI's own prints never smear
+  the frame). 30 unit tests (temp `PIXPAPERS_HOME` + throwaway socket
+  listener; add-by-path proven byte/hash-identical to CLI `add`; remove
+  leaves no dir/manifest residue) and 3 new `TestBackend` goldens (10
+  total) at the pinned 100×30; live pty row — `test/verify-tui.sh`
+  drives the full key table on a real pty against a scratch home
+  (headless: no daemon spawn), then asserts the post-exit manifest and
+  config truth — in [docs/VERIFICATION.md](docs/VERIFICATION.md) §S7.

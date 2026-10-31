@@ -129,7 +129,7 @@ iTerm2/base64 wire tests. Live rows:
 | V-T2 iTerm2 on-screen | **skip (named)**: macOS-only terminal, not available here | — |
 | V-T3 sixel terminal on-screen | **skip (named)**: no sixel-capable terminal installed (foot has none; xterm not installed) | — |
 | V-T4 export byte-identity (**real**) | 6 export variants (auto / vga+fs / gen16 / off / cover-gutter / normal+nes) `cmp` against the pre-refactor binary (564a966 worktree) | all byte-identical — the preview shares the export encoder verbatim |
-| V-T5 action keys | **skip (named)**: S7 wires them; S6 prints `(S7)` honestly | — |
+| V-T5 action keys | **skip (named) as of S6** — wired in S7: see the §S7 live row below (real pty, full key table, post-exit file truth) | — |
 
 Gate at `343bc9a`: `cargo test --workspace` 76+23 green · clippy
 `-D warnings` green · `fmt --check` clean · offline `smoke.sh` green ·
@@ -138,3 +138,52 @@ Gate at `343bc9a`: `cargo test --workspace` 76+23 green · clippy
 offline layers (smoke.sh, harness) now strip `DISPLAY` too — two test-
 spawned daemons bound to deleted temp homes were found running and were
 killed with `pkill -x pixpapers`.
+
+## S7 — TUI actions (2026-10-31)
+
+`pixpapers tui` action table (PLAN-30-ct §C.4/§C.5 — the V-T5 skip
+above, now replaced): the full key table `a s c p l t d b g D e x r`
+on the S6 shell. Every action goes through the same `commands::*`
+function the CLI subcommand calls, then the same `cli::apply_now` seam
+(invariant #1 — the TUI never reimplements spawn/notify/manifest
+writes). Status lines carry the CLI's own wording, built from the same
+*data* the CLI's prints use (id/title/knob values/bytes), not from
+stdout capture: libtest intercepts `println!` at the Rust level, so an
+fd-level capture is empty in-process tests; on a real terminal the
+`Quiet` drain (fd 1+2 → pipe, restored on drop) keeps the CLI's own
+prints off the alternate screen.
+
+Unit plane: 76 pixcore + 53 pixpapers tests green (23 S6 + 30 action
+tests: per-action against temp `PIXPAPERS_HOME` + throwaway socket
+listener — add-by-path byte/hash-identical to CLI `add` of the same
+file; remove-current clears `current` and leaves no dir/manifest
+residue; remove-non-current does not Apply; mid-apply sequence stays
+consistent; knob cycles Apply only on the current entry; bad input is a
+status error, nothing stored). Goldens: 10 `TestBackend` frames at the
+pinned 100×30 (7 S6 + 3 new: `add_input`, `remove_confirm`,
+`knob_cycle`).
+
+Live row:
+
+| Row | What ran | Result |
+|---|---|---|
+| V-T5 action keys (**real**) | `test/verify-tui.sh` (new; driver `test/tui-pty.py` — the committed form of S6's ad-hoc pty driver): real pty (`pty.fork`, winsize 100×30, `TERM=xterm-256color`); pty env strips `DISPLAY`/`WAYLAND_DISPLAY` + the image-protocol vars (headless — no daemon spawn, Applies record, file writes real); release binary; scratch `PIXPAPERS_HOME` seeded via the real CLI (A = fixture, B = generated PNG, `current = A`; C's id learned in a throwaway home). One key burst: `c` (cycle A→B) · `a <path>\r` (add C) · `k` (select B) · `p` `l` · `b #00ff00\r` · `g 40\r` · `t` `d` · `s` (set B current) · `e` (toggle enabled) · `j` (select C) · `x` (export C to the scratch `$XDG_DOWNLOAD_DIR`) · `Dy` (remove C — no space: the confirm line swallows the very next key, a space would cancel) · `r` (refresh) · `q` (quit) | exit 0; alternate screen entered **and** left; post-exit truth asserted from files, not screen: `current` A→B; B's knobs all changed as driven (32 / cover-gutter / nes / fs / `#00ff00` / 40px); A byte-identical to pre-run; C gone from manifest **and** dir; config `enabled` true→false; exactly one export PNG in the scratch download dir (`normal-fit` — `e` disabled pixelation before `x`, and the export honestly reflects the originals-only state); the wire renders the `added`/`removed`/`wrote` status lines (ratatui's cell diff means the wire is rendering evidence, not a verbatim transcript — the verbatim strings are pinned by the unit tests) |
+
+Gate (this tree): `cargo test -p pixpapers` 53 passed (parallel and
+`--test-threads=1`) · `cargo test --workspace` 76 pixcore + 53 pixpapers
+green · clippy `--workspace --all-targets -- -D warnings` green ·
+`fmt --check` clean · offline `smoke.sh` ok. Release binary
+(`cargo build --release`, same host, this tree): **4,751,720 B** vs the
+S6 baseline 4,706,216 B — **+45,504 B (+44.4 KiB)** for the action
+table + drain.
+
+Hardening found by running the suite for real: the fd-level drain
+(`Quiet`) is compiled out under `cfg(test)` — libtest already captures
+`println!` at the Rust level, and a process-global `dup2` racing with
+another test thread's subprocess spawn is a cross-test deadlock (the
+child inherits the armed pipe's write end and the drain's read never
+sees EOF — observed wedging the whole libtest pool on a loaded host).
+In the real binary both pipe ends are `CLOEXEC` (the daemon `apply_now`
+auto-spawns must not inherit them) and the drain is bounded (poll-based,
+2 s deadline) so no holder can hang the TUI. The status lines are
+data-derived, so no test ever depended on the capture.

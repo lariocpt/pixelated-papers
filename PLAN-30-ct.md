@@ -421,6 +421,19 @@ terminal image protocols**, and a text fallback when it does not.
   TUI auto-spawns it (same `daemon::spawn::ensure_running` path as the
   CLI) — no special-casing.
 
+> **Corrected 2026-10-31 (S7 shipped):** remove is the single key `D`,
+> not `rm` — `rm` would be read as `r` (refresh) then `m`; the confirm
+> line `remove <id>? y/N` is drawn in the status row. Add-by-path never
+> sets current and never Applies (CLI `add` semantics, invariant #1),
+> and its result line is the CLI's verbatim
+> `added <id> · <title> · <W>×<H> · <optimize note> · <KB> KB` (dedupe
+> prints `already in library: <id> (<title>)`), not the `<bytes>`
+> sketch above. Status lines are built from the same *data* the CLI's
+> prints use (identical wording, no fd-level stdout capture — a test
+> harness intercepts `println!` at the Rust level). As-implemented
+> table + input-line rules: [docs/CLI.md](docs/CLI.md) §TUI; evidence:
+> [docs/VERIFICATION.md](docs/VERIFICATION.md) §S7.
+
 ### C.5 Tests & evidence
 
 - **pixcore**: preview-size computation (cell grid → canvas dims) pure +

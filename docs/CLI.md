@@ -66,10 +66,39 @@ Changing a default re-applies to any *unset* current wallpaper immediately.
 |---|---|
 | `tui` | Interactive terminal front-end (PLAN-30 §C): library list left, **offline preview** right (the exact `export` render path — a preview that cannot lie), status bar `daemon:up/down · img:<proto> · last action`. Works with the daemon dead (the status bar says so). Ships behind the default-on `tui` cargo feature. |
 
-Keys: `↑/k` `↓/j` select · `r` re-read manifest + config and re-probe the
-daemon (no mutation, no IPC) · `Ctrl-L` repaint · `q` / `Esc` / `Ctrl-C`
-quit. The action keys (`a s c p l b g t d e x rm`) are listed in the hint
-bar but land in the next step; until then they honestly print `(S7)`.
+Keys — the full action table (S7). Every action goes through the same
+`commands::*` function the CLI subcommand calls, then the same `Apply`
+seam — a knob edited here is byte-identical to the same edit via CLI,
+and a dead daemon only changes the Apply wording, never the file
+writes. All results land in the status bar; on the alternate screen
+nothing is printed to the terminal (errors included).
+
+| Key | Action | Status line (success) |
+|---|---|---|
+| `a` | Add by path — input line; type/paste an image path (tilde-expanded), Enter | the CLI's own line: `added <id> · <title> · <W>×<H> · <optimize note> · <KB> KB`. Re-adding the same bytes is not an error: `already in library: <id> (<title>)`. `add` does not set current and does not Apply (CLI semantics) |
+| `s` | Set the selected entry current | `set <id> · <title> (applied)` — `(recorded — will show when the daemon runs)` when the daemon is down and cannot be spawned |
+| `c` | Cycle current to the next entry (1 step) | `cycle → <id> · <title> (<state>)` |
+| `p` | Cycle pixel `8→16→32→64→128→normal` | `<id> → pixel <v>` (plus ` (not current — will apply on set)` when the edited entry is not current) |
+| `l` | Cycle placement `fit→cover-gutter→cover-crop→stretch` | `<id> → placement <v>` |
+| `t` | Cycle palette `off→auto→nes→gb→cga→ega→vga→gen16` | `<id> → palette <v>` |
+| `d` | Cycle dither `none→fs→atkinson→bayer2→bayer4→bayer8` | `<id> → dither <v>` |
+| `b` | Prompt bg colour — input line, `#rgb` or `#rrggbb` | `<id> → bg <#rrggbb>` (`#abc` stores `#aabbcc`) |
+| `g` | Prompt gutter px — input line | `<id> → gutter <n>px` |
+| `D` | Remove the selected entry — confirm line in the status row: `remove <id>? y/N`; `y`/`Y` confirms, anything else cancels | `removed <id> (<title>)` — `Apply` only when the removed entry was current. Single key on purpose: `rm` would collide with `r` (refresh) |
+| `e` | Toggle pixelation on/off (config) + Apply | `pixelation enabled` / `pixelation disabled — originals only (still stretched/placed)` |
+| `x` | Export the selected entry at the preview canvas to the download dir (`$XDG_DOWNLOAD_DIR` → `~/Downloads` → `.`) | the CLI's `wrote <dest> · <W>×<H> · <pixel> <placement> · <KB> KB` (not a mutation: no reload, no Apply) |
+| `r` | Refresh — re-read manifest + config, re-probe the daemon (no mutation, no IPC) | `refreshed` |
+
+Navigation: `↑/k` `↓/j` select · `Ctrl-L` repaint · `q` / `Esc` /
+`Ctrl-C` quit (exit 0, alternate screen restored).
+
+The input line (`a` / `b` / `g`) is one shared buffer: printable keys
+insert at the cursor; `Backspace`, `←`/`→`, `Home`/`End` edit; **Enter
+submits; `Esc` / `Ctrl-C` cancel; `q` cancels the line too but does NOT
+quit** while it is up (`Ctrl-Q` is ignored). A paste arrives as a burst
+of key presses and assembles as-is. Bad values (no such file, wrong
+extension, unparsable colour, non-numeric gutter) are status-bar
+errors — nothing is stored, nothing is applied.
 
 Preview: generated only when the terminal speaks an image protocol
 (table below); re-rendered on selection change, `r` refresh, or resize —
