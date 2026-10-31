@@ -114,8 +114,9 @@ arbitration, last one wins.
   v0.1. Knobs and goldens in [docs/CLI.md](docs/CLI.md).
 - **X11** — the daemon renders the root window when `DISPLAY` is set and
   no Wayland compositor is visible; the exit-43 contract on compositor
-  loss is identical to wayland. Auto-detect order, the depth-24 contract
-  and the evidence in [docs/COMPOSITORS.md](docs/COMPOSITORS.md).
+  loss is identical to wayland, and a graceful stop clears the roots to
+  solid black (no stray wallpaper). Auto-detect order, the depth-24
+  contract and the evidence in [docs/COMPOSITORS.md](docs/COMPOSITORS.md).
 - **TUI** — `pixpapers tui`: the library as a list with a sixel preview
   where the terminal supports the kitty image protocol, a text fallback
   elsewhere; add, set, remove and the preset/palette/dither cycles all

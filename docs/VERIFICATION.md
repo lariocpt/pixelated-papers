@@ -587,3 +587,25 @@ pixpapers** green (the +3 are the audit's new tests) · clippy
 `--workspace --all-targets -- -D warnings` green · `fmt --check`
 clean · `env -u WAYLAND_DISPLAY test/smoke.sh` green (including the
 new empty-cycle line).
+
+## x11: stop clears the roots (2026-11-01, `1e79d00`)
+
+Post-close-out fix. The x11 `close` now clears every root window to
+solid black before disconnecting (best-effort on the exit-43 path,
+where the server is already gone), so a stopped daemon leaves no stray
+frame on the X server.
+
+- `test/verify-x11.sh` — new assertion: after `stop`, `import
+  -window root` is pixel-identical to a 1024×768 black reference
+  (AE=0). Full suite green on this machine (xvfb, no skips). The
+  script now also prefers `magick` over IM7's deprecated `convert` so
+  its output stays clean.
+- Stop latency — the daemon's process exit measured after the `stop`
+  ack (the ack is sent before teardown, so this is the only cost that
+  exists), 1024×768 Xvfb, release, 5 runs each: before
+  2/2/8/8/8 ms · after 2/7/7/7/8 ms (median 8 → 7) — one batched
+  CreateGC + PolyFillRectangle + FreeGC per screen rides the existing
+  flush; no measurable cost.
+- A hard kill (`kill -9`, power loss) skips teardown and leaves the
+  last frame — unchanged by design: the clear is a graceful-shutdown
+  courtesy, not a persistence guarantee (docs/TROUBLESHOOTING).

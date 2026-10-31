@@ -116,14 +116,22 @@ bands). No Xv, no GPU — the backend does not depend on either.
   display-manager bounce) ⇒ teardown — socket + pidfile removed — and
   **exit 43**, the identical contract to the wayland path (the same
   `RestartPreventExitStatus=43` note above applies).
+- **Stop clears the root** (`1e79d00`): a graceful stop (and the
+  best-effort exit-43 teardown) clears every root window to solid
+  black before disconnect — the daemon takes the wallpaper with it, so
+  no stray frame is left on the X server (previously the last rendered
+  frame persisted, e.g. behind X11 windows on Xwayland, until something
+  else drew the root). A hard kill (`kill -9`, power loss) skips
+  teardown and leaves the frame; see TROUBLESHOOTING.
 
-Evidence: `test/verify-x11.sh` self-wraps in Xvfb and asserts six
+Evidence: `test/verify-x11.sh` self-wraps in Xvfb and asserts seven
 things — `DISPLAY`-only start ⇒ backend `x11`; the root pixmap
 byte-identical to the `export` oracle (AE=0); an RFPWM hint triggers a
 re-render at the new size, again oracle-identical; clean stop leaves
-the X server up; killing the X server ⇒ exit 43; a depth-16 root ⇒
-exit 1 with the loud depth message. The live-session row (a real
-Xwayland `DISPLAY=:0`) is recorded in
+the X server up and clears the root to solid black (AE=0 against a
+black reference — `1e79d00`); killing the X server ⇒ exit 43; a
+depth-16 root ⇒ exit 1 with the loud depth message. The live-session
+row (a real Xwayland `DISPLAY=:0`) is recorded in
 [VERIFICATION.md](VERIFICATION.md) §S5. Blit numbers are in
 [PERF.md](PERF.md) ("X11 blit"). Multi-screen oddities beyond the
 tested single/few-screen setups wait for field reports.
