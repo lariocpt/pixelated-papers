@@ -92,6 +92,7 @@ the same change.
 ## Deferred by decision, not by omission
 
 Blurred-bleed gutter variant (plan §10 open question — `cover-gutter`
-shipped as mat-margin), TUI/X11/live wallpapers/palettes/auto-preset,
-exact fractional buffers, headless-sway CI. Don't "helpfully" implement
-these without asking; they're v0.2+ scoped on purpose.
+shipped as mat-margin), GUI window, live wallpapers, auto-preset,
+MPRIS-ish hooks, exact fractional buffers, headless-sway CI. Don't
+"helpfully" implement these without asking; they're v0.2+ scoped on
+purpose.
