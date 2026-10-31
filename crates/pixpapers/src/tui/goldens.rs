@@ -15,6 +15,7 @@ use ratatui::style::Color;
 
 use pixcore::{Config, Entry, Library, Paths, Settings};
 
+use super::actions::{InputKind, InputLine};
 use super::detect::detect_from_map;
 use super::{App, ImageProto, PreviewState, draw};
 
@@ -47,6 +48,9 @@ fn app(entries: Vec<Entry>, current: Option<&str>, proto: ImageProto) -> App {
         daemon_up: false,
         proto,
         preview: PreviewState::Idle,
+        input: None,
+        confirm_remove: None,
+        canvas: (0, 0),
         preview_dirty: false,
         emit_pending: false,
         image_on_screen: false,
@@ -98,6 +102,22 @@ fn tui_goldens() {
     let two = || vec![entry("d5113bb7", "nebula"), entry("dc731e25", "dunes")];
     let mut selected = app(two(), Some("d5113bb7"), ImageProto::None);
     selected.sel = 1;
+    // S7: the add input line is up — the status row shows the prompt with
+    // the typed path echoed and a `█` cursor.
+    let mut add_input_app = app(two(), Some("d5113bb7"), ImageProto::None);
+    add_input_app.input = Some(InputLine {
+        kind: InputKind::Add,
+        buf: "~/Pictures/nebula.png".to_string(),
+        pos: 7,
+    });
+    // S7: a remove confirmation is pending — the status row asks y/N.
+    let mut remove_confirm_app = app(two(), Some("dc731e25"), ImageProto::None);
+    remove_confirm_app.sel = 1;
+    remove_confirm_app.confirm_remove = Some("dc731e25".to_string());
+    // S7: a knob cycle landed — the status bar carries the result line
+    // (selection is on the edited/current entry, so it applied).
+    let mut knob_cycle_app = app(two(), Some("d5113bb7"), ImageProto::None);
+    knob_cycle_app.last = "d5113bb7 → pixel 32".to_string();
     let cases: Vec<(&str, App)> = vec![
         // initial view in a plain terminal: caption + honest fallback
         ("initial", app(two(), Some("d5113bb7"), ImageProto::None)),
@@ -139,6 +159,9 @@ fn tui_goldens() {
                 detect_from_map(&env(&[("TERM", "xterm-256color")])),
             ),
         ),
+        ("add_input", add_input_app),
+        ("remove_confirm", remove_confirm_app),
+        ("knob_cycle", knob_cycle_app),
     ];
 
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/tui");

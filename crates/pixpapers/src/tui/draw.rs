@@ -26,11 +26,12 @@ pub struct Geom {
     pub canvas: (u32, u32),
 }
 
-/// The static key hint bar (C.2). `rm` is the two-key remove binding;
-/// S7 decides its exact wiring (see mod.rs key handling).
+/// The static key hint bar (C.2/C.4). Remove is single-key `D` — `rm` is
+/// two keys and `r` is taken by refresh (deviation recorded in CLI.md and
+/// PLAN-30 §C.4).
 pub const HINTS: &str = "a add · s set · c cycle · p pixel · l place · b bg · \
-                        g gutter · t palette · d dither · r refresh · x export · \
-                        rm remove · q";
+                        g gutter · t palette · d dither · D remove · r refresh · \
+                        x export · q";
 
 /// One library row: `▸ id title pixel placement` — `▸` marks
 /// `library.current` (the selection is drawn as a highlight, not a
@@ -108,7 +109,16 @@ pub fn frame(f: &mut Frame, app: &App) -> Geom {
         .areas(area);
 
     // ── status bar + hint bar ──────────────────────────────────────────
-    f.render_widget(Paragraph::new(Line::from(status_spans(app))), status);
+    // While an input line or a remove confirmation is up, the status row
+    // shows that prompt (S7); otherwise the usual spans.
+    let status_line = if let Some(p) = super::actions::confirm_prompt(app) {
+        Line::from(p)
+    } else if let Some(p) = super::actions::input_prompt(app) {
+        Line::from(p)
+    } else {
+        Line::from(status_spans(app))
+    };
+    f.render_widget(Paragraph::new(status_line), status);
     let hint: String = HINTS.chars().take(area.width as usize).collect();
     f.render_widget(
         Paragraph::new(hint).style(Style::default().add_modifier(Modifier::DIM)),

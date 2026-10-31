@@ -20,19 +20,21 @@ use pixcore::{Dither, PaletteMode, Paths};
 use crate::ipc::Request;
 
 /// The repo's shared test fixture (`crates/pixpapers` → `test/fixture.png`).
-fn fixture() -> PathBuf {
+pub(crate) fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixture.png")
 }
 
 /// A hermetic `PIXPAPERS_HOME` (tempdir, required dirs created).
-struct Home {
+/// `pub(crate)`: the S7 TUI unit tests drive `App` against the same
+/// hermetic homes.
+pub(crate) struct Home {
     _dir: tempfile::TempDir,
-    root: PathBuf,
-    paths: Paths,
+    pub(crate) root: PathBuf,
+    pub(crate) paths: Paths,
 }
 
 impl Home {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         let paths = Paths::with_root(&root);
@@ -48,7 +50,7 @@ impl Home {
     /// for this package's test targets; the fallback reconstructs
     /// `target/<profile>/pixpapers` from the test binary's location for
     /// direct invocations.
-    fn bin() -> PathBuf {
+    pub(crate) fn bin() -> PathBuf {
         std::env::var_os("CARGO_BIN_EXE_pixpapers")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
@@ -63,7 +65,7 @@ impl Home {
     }
 
     /// Run the CLI as a subprocess against this home (headless-safe).
-    fn cli(&self, args: &[&str]) -> (i32, String, String) {
+    pub(crate) fn cli(&self, args: &[&str]) -> (i32, String, String) {
         let out = std::process::Command::new(Self::bin())
             .args(args)
             .env("PIXPAPERS_HOME", &self.root)
@@ -78,24 +80,24 @@ impl Home {
         )
     }
 
-    fn entry_id(&self, idx: usize) -> String {
+    pub(crate) fn entry_id(&self, idx: usize) -> String {
         let text = std::fs::read_to_string(self.paths.manifest_file()).unwrap();
         let lib: pixcore::Library = serde_json::from_str(&text).unwrap();
         lib.entries[idx].id.clone()
     }
 
-    fn manifest_text(&self) -> String {
+    pub(crate) fn manifest_text(&self) -> String {
         std::fs::read_to_string(self.paths.manifest_file()).unwrap()
     }
 
-    fn config_text(&self) -> String {
+    pub(crate) fn config_text(&self) -> String {
         std::fs::read_to_string(&self.paths.config_file).unwrap()
     }
 
     /// A second, distinct source (16×16 solid) for multi-entry homes — the
     /// manifest dedupes by content hash, so it must differ from the fixture;
     /// 16 is the exact minimum short side `optimize` accepts.
-    fn small_source(&self) -> PathBuf {
+    pub(crate) fn small_source(&self) -> PathBuf {
         let p = self.root.join("solid-green.png");
         let img = image::RgbaImage::from_pixel(16, 16, image::Rgba([0, 208, 0, 255]));
         image::save_buffer(
@@ -112,7 +114,7 @@ impl Home {
     /// Assert one stdout line (snapbox keeps the declared dev-dep honest and
     /// gives a readable diff on mismatch). stdout always ends the line with
     /// `\n`, so the expected text is normalized to carry it.
-    fn assert_line(&self, actual: &str, expected: &str) {
+    pub(crate) fn assert_line(&self, actual: &str, expected: &str) {
         snapbox::Assert::new().eq(actual, snapbox::Data::text(format!("{expected}\n")));
     }
 }

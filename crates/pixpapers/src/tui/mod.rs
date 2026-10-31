@@ -3,16 +3,18 @@
 //! rendered preview on the right, a status bar for daemon aliveness and the
 //! terminal image-protocol detection result.
 //!
-//! The TUI is a *client* exactly like the CLI: in this step (S6) it only
-//! previews offline from the library — no state mutation happens here (the
-//! action keys are S7, and they no-op with a `(S7)` status note until then).
-//! A dead daemon is fine: the preview is offline and the status bar says so.
+//! The TUI is a *client* exactly like the CLI: the C.4 action keys
+//! (`a s c p l b g t d D e x`) go through the *same* `commands::*`
+//! functions the CLI subcommands call, then the CLI's `apply_now` seam
+//! (PLAN-30 invariant #1 — see `actions.rs`). A dead daemon is fine: the
+//! preview is offline and the status bar says so.
 //!
 //! Terminal model (C.1): the TUI owns its own single-threaded loop —
 //! crossterm events in, one ratatui frame out. No event-loop crate, no
 //! tokio (the daemon's posture, kept). Alternate screen + raw mode are
 //! armed on entry and restored on exit by a `Drop` guard (panic-safe).
 
+mod actions;
 mod detect;
 mod draw;
 mod emit;
@@ -87,6 +89,15 @@ pub struct App {
     /// Image-protocol detection (C.3) — startup only, shown as `img:`.
     pub proto: ImageProto,
     pub preview: PreviewState,
+    /// The shared input line while `a`/`b`/`g` is collecting text
+    /// (S7). Rendered on the status row.
+    pub(crate) input: Option<actions::InputLine>,
+    /// A pending remove confirmation: the id awaiting y/N on the next
+    /// key (S7, `D`).
+    pub(crate) confirm_remove: Option<String>,
+    /// The preview canvas from the last drawn frame; `x` exports at it
+    /// (zero before the first frame → export falls back to 1920×1080).
+    pub(crate) canvas: (u32, u32),
     /// Set on selection change / refresh / resize: the next loop pass
     /// re-renders the preview (never on a timer).
     preview_dirty: bool,
@@ -100,7 +111,9 @@ pub struct App {
 }
 
 impl App {
-    fn new(paths: Paths, cfg: Config) -> Result<Self> {
+    /// `pub(crate)`: the S7 unit tests construct the app directly against
+    /// a hermetic `PIXPAPERS_HOME`.
+    pub(crate) fn new(paths: Paths, cfg: Config) -> Result<Self> {
         let lib = Library::load(&paths).context("load library")?;
         let mut app = Self {
             paths,
@@ -111,6 +124,9 @@ impl App {
             daemon_up: false,
             proto: detect::detect(),
             preview: PreviewState::Idle,
+            input: None,
+            confirm_remove: None,
+            canvas: (0, 0),
             preview_dirty: true,
             emit_pending: false,
             image_on_screen: false,
@@ -164,13 +180,6 @@ impl App {
     }
 }
 
-/// The C.4 action keys, unwired: S7 replaces these with the real
-/// `commands::*` calls + Apply. Until then they are honest no-ops that
-/// say so — the status bar prints `(S7)` (task contract).
-fn s7_note(key: char) -> String {
-    format!("(S7) '{key}' — actions land in S7")
-}
-
 /// The blocking preview render (C.3): literally a small export — the
 /// same `render_offline` the CLI export runs, at the pane canvas. Only
 /// called when the terminal can display an image (proto ≠ None).
@@ -222,6 +231,8 @@ pub fn run(paths: &Paths, cfg: &Config) -> Result<()> {
         let mut geom = draw::Geom::default();
         term.draw(|f| geom = draw::frame(f, &app))
             .context("draw frame")?;
+        // The export canvas is whatever the last frame actually laid out.
+        app.canvas = geom.canvas;
 
         // (Re)generate the preview when dirty — selection, refresh,
         // resize. Never on a timer. The render can take seconds (the
@@ -275,32 +286,28 @@ pub fn run(paths: &Paths, cfg: &Config) -> Result<()> {
             // crossterm fires Press/Release/Repeat on some terminals; act once.
             Event::Key(k) if k.kind == KeyEventKind::Press => {
                 let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+                // Ctrl-L: repaint (no state change — the terminal may have
+                // smeared; a full redraw fixes it). The displayed image is
+                // untouched by a text repaint. Plain `l` is the placement
+                // cycle and falls through to the action table below.
+                if k.code == KeyCode::Char('l') && ctrl {
+                    term.clear()?;
+                    continue;
+                }
                 match k.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break,
-                    KeyCode::Char('c') if ctrl => break,
                     KeyCode::Down | KeyCode::Char('j') => app.move_sel(1),
                     KeyCode::Up | KeyCode::Char('k') => app.move_sel(-1),
-                    KeyCode::Char('r') => {
-                        app.refresh_state()?;
-                        app.last = "refreshed".into();
+                    // Everything else is the C.4 table (S7): `q`/Esc/Ctrl-C
+                    // are the only keys that leave the loop; action errors
+                    // land in the status bar, never here.
+                    _ => {
+                        if matches!(
+                            actions::handle(&mut app, k.code, ctrl),
+                            actions::KeyOutcome::Quit
+                        ) {
+                            break;
+                        }
                     }
-                    KeyCode::Char('l') if ctrl => {
-                        // Ctrl-L: repaint (no state change — the terminal
-                        // may have smeared; a full redraw fixes it). The
-                        // displayed image is untouched by a text repaint.
-                        term.clear()?;
-                    }
-                    // C.4 action keys, unwired (plain `l` is the placement
-                    // cycle — Ctrl-L repaints above and never reaches here).
-                    KeyCode::Char(
-                        c @ ('a' | 's' | 'c' | 'p' | 'l' | 'b' | 'g' | 't' | 'd' | 'e' | 'x'),
-                    ) => {
-                        app.last = s7_note(c);
-                    }
-                    // `rm` is two keys; S7 decides the binding (r alone is
-                    // refresh). Until then `m` is the remove no-op marker.
-                    KeyCode::Char('m') => app.last = s7_note('m'),
-                    _ => {}
                 }
             }
             // Resize → relayout from terminal.size() and re-render the

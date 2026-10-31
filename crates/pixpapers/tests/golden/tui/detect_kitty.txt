@@ -27,4 +27,4 @@
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
 daemon:down · img:kitty · ready
-a add · s set · c cycle · p pixel · l place · b bg · g gutter · t palette · d dither · r refresh · x
+a add · s set · c cycle · p pixel · l place · b bg · g gutter · t palette · d dither · D remove · r
