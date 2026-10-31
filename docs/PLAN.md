@@ -341,3 +341,60 @@ record: [VERIFICATION.md](VERIFICATION.md); numbers: [PERF.md](PERF.md).
 | **`--cache-dir`** | skipped — hermetic `PIXPAPERS_HOME` already isolates the variant cache for benches. |
 | **§9.4 stretch optimization** | **skipped with evidence**: hot switch p95 45 ms « 100 ms bar; 4K stretch 11.6 ms inside it. The 4K@8 cold 105 ms is median-cut, one-time per new combo. |
 | **Palette variants** (§3, "subtly retro palette") | implemented and default-on — but VERIFICATION/PERF state plainly: `normal` is 1× (no magic), flat-art ratios are modest; the ≥100× headline is photographic sources only. |
+
+---
+
+## 12. Retro — what actually happened (v0.2, 2026-10-31)
+
+The plan: [PLAN-30-ct.md](../PLAN-30-ct.md) — four workstreams (A
+palettes & dithering, B X11, C TUI, D waybar module) run as steps
+S1–S9; the self-contained per-step prompts live in
+`SESSION-PROMPTS.md`. Full test record: [VERIFICATION.md](VERIFICATION.md)
+§S1–S9; numbers: [PERF.md](PERF.md).
+
+**Key decisions, as shipped:**
+
+- **Cache key v2, no migration** (A.2): the variant filename carries the
+  look — `…-{Q}[-{D}].png` — and `PIPELINE_VERSION` went 1→2, so v0.1
+  caches are simply invalidated and reclaimed by the existing
+  `prune_variants`. The variant cache is disposable by design; there is
+  no migration code. The v0.1 default look `(auto, none)` stayed
+  byte-identical — pinned by goldens captured from the untouched v0.1
+  worktree (`29ef2b4`).
+- **Backend seam, double-pump** (B.1): the supervisor pumps *before and
+  after* the poll. The plan's literal reading — one `pump()` after the
+  poll — is measurably wrong: the cold-start handshake slips one tick per
+  hop, and a cold `set` returns a no-op ack (52–53 ms) while the render
+  finishes in the background. The double pump restores the pre-seam
+  ordering at the cost of one would-block read per idle tick
+  (VERIFICATION "Re-run after S4": cold `set` back to the 91 ms before
+  brackets).
+- **TUI: render only when supported** (C.3): protocol detection at
+  startup (kitty `ESC_G`, iTerm2 OSC 1337, sixel, else text fallback)
+  shown once in the status bar, one env var (`PIX_PAPERS_IMAGE`) from
+  forcing anything — never a fake image. Every action calls the same
+  `commands::*` the CLI subcommand calls (invariant #1), so a TUI edit
+  is byte-identical to the CLI edit.
+- **Waybar as the GUI** (D.2): `pixpapers bar` — exactly one line,
+  always exit 0 (the module's auto-hide contract) — plus a drop-in
+  snippet whose `on-click` opens the TUI in the user's terminal. A
+  pixpapers-owned toolbar button was rejected: font rasterization plus a
+  second input path to keep alive, for a label waybar provides for
+  free. The `on-click` is the slot a real GUI window flips into later
+  (PLAN-30-ct §9): same snippet slot, `commands::*` still the only state
+  path, `status --json` still the only read face.
+
+**Settled differently than proposed** — each corrected in the plan file
+or the step prompt as it was found; VERIFICATION.md records the
+evidence:
+
+| Item | Where the plan said → what shipped |
+|------|------------------------------------|
+| **kitty image protocol** (C.3) | the table cell said "OSC 6337" — folklore; kitty has used the APC `G` protocol (`ESC_G … ESC \`) since 0.4.0 and never OSC 6337 (verified against kitty sources v0.4.0 → master). Cell corrected in place at S6 (`aff70d6`); wire capture: VERIFICATION §S6 V-T0b. |
+| **`normal` preset** (A.1) | the plan said `normal` dithers the full-size canvas; the v0.1 code never ran the quantize stage on it (plain crop, palette-encoded at encode only) — a wiring gap S3's bench exposed. S3.5 made the code match the intent: the plain-crop early return survives **only** for `(auto, none)` (the v0.1 default, byte-identical), everything else runs the full-canvas quantize before the unchanged encode. Plan amended in place (`694a248`); the 4K one-time costs documented in PERF.md. |
+| **remove key** (C.4) | the action table said `rm` — the TUI would read that as `r` (refresh) then `m`; remove is the single key `D`. Table corrected in place at S7 (`433c764`), with add-by-path's result line (the CLI's verbatim wording, not the sketch) and its never-Applies semantics. |
+| **waybar `format`** (D.1) | the snippet pinned `format "{ }"` — Arch's waybar 0.15.0 links the system libfmt 12, which rejects the space after `{` as an invalid automatic argument reference; the module's event box then stayed *silently hidden*. Ships as `"{text}"` (`96460e1`); live A/B in VERIFICATION §S8 "Format finding". |
+| **wheel direction** (D.1) | the plan pinned only the `on-scroll-up: cycle 1` example, and the snippet as drafted ran `cycle 1` for *both* directions — directionally inert. Shipped direction-aware: up = `cycle 1`, down = `cycle -1` with wrap (`8c2f171` corrected the step prompt; `14cfa89` gave `cycle` a signed step). |
+| **S5 without xvfb** (§6 S5 row) | the acceptance ran `verify-x11.sh` "under xvfb" — a host without it would have made S5 a *named skip*. The step was amended to **hard-stop** instead (`8b2891d`): an unverified x11 backend is not a mergeable S5, so the session stops and asks for the one package rather than degrading. This box got `xvfb` installed (user-approved) and the full suite ran — VERIFICATION §S5. |
+| **`DISPLAY` in offline tests** (test infra) | the plan never covered it because auto-spawn only watched `WAYLAND_DISPLAY`; when S5 made `DISPLAY` alone sufficient, the *offline* test layers (which stripped only `WAYLAND_DISPLAY`) let test subprocesses spawn real daemons against the user's live X session. `smoke.sh` and the harness now strip both (`20e73ce`). |
+| **exit-code contract** (S9 task 7) | S8 found a pre-existing violation: `cycle` on an empty library bailed with a bare message `is_user_error` did not recognise — a user condition exiting 2. The audit (`dde4d1f`) moved the user-condition paths to 1 (empty library; unknown ids on `set`/knobs/`export`; unparseable sizes — messages byte-identical) and reported, without fixing, the three out-of-scope exits-2 paths: `export -o` write failure (io), clap usage errors (framework), and the duplicate-foreground-`daemon` bail that has been 2 since v0.1 `10dbc8b` — whose doc claim ("exits 1") was the actual bug, corrected doc-side. |
