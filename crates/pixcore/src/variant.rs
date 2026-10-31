@@ -400,34 +400,280 @@ mod tests {
         }
     }
 
-    /// Acceptance (PLAN-30 A.4): Auto + None is **byte-identical to v0.1**.
-    /// tests/golden/v01/ was captured from the untouched v0.1 tree (commit
-    /// 29ef2b4) via the public API on the same sources (pixel 8, Fit,
-    /// 320×180); sha256 recorded in the wiring commit message.
+    /// Acceptance (PLAN-30 A.4 / S3.5): the v0.1 default look is
+    /// **byte-identical to v0.1**. tests/golden/v01/ was captured from the
+    /// untouched v0.1 tree (commit 29ef2b4) via the public API on the same
+    /// sources (Fit, 320×180); sha256 recorded in the wiring commit message.
+    /// S1/S3 proved pixel 8; S3.5 extends the fixture to `normal` — the
+    /// preset that matters now. (auto, none) early-returns the crop (encode
+    /// still does its median_cut(255), exactly as v0.1); (off, none) is the
+    /// plain-crop RGBA path.
     #[test]
     fn auto_none_matches_v01_bytes() {
         for (name, src) in [
             ("photo128x80", testsrc::photo128x80()),
             ("gradient64", testsrc::gradient64()),
         ] {
-            for (tag, palette) in [("auto", PaletteMode::Auto), ("off", PaletteMode::Off)] {
-                let s = ResolvedSettings {
-                    pixel: "8".parse().unwrap(),
-                    placement: Placement::Fit,
-                    palette,
-                    ..ResolvedSettings::resolve(&Default::default(), &Default::default())
-                };
-                let canvas = generate_from_image(&src, &s, (320, 180));
-                let bytes = encode_variant(&canvas, palette);
-                let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join(format!("tests/golden/v01/{name}-{tag}.png"));
-                let want = std::fs::read(&golden).expect("v0.1 golden present");
-                assert_eq!(
-                    bytes, want,
-                    "{name}/{tag} differs from the v0.1 capture (regression!)"
-                );
+            for (pixel, mid) in [("8", ""), ("normal", "-normal")] {
+                for (tag, palette) in [("auto", PaletteMode::Auto), ("off", PaletteMode::Off)] {
+                    let s = ResolvedSettings {
+                        pixel: pixel.parse().unwrap(),
+                        placement: Placement::Fit,
+                        palette,
+                        ..ResolvedSettings::resolve(&Default::default(), &Default::default())
+                    };
+                    let canvas = generate_from_image(&src, &s, (320, 180));
+                    let bytes = encode_variant(&canvas, palette);
+                    let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join(format!("tests/golden/v01/{name}{mid}-{tag}.png"));
+                    let want = std::fs::read(&golden).expect("v0.1 golden present");
+                    assert_eq!(
+                        bytes, want,
+                        "{name}{mid}/{tag} differs from the v0.1 capture (regression!)"
+                    );
+                }
             }
         }
+    }
+
+    // S3.5: `normal` + a *named* palette runs the crop through quantize, so
+    // every output color is inside the chosen table (proptest over
+    // arbitrary pixel content, all named modes × all dithers). The
+    // fully-transparent entry is allowed for pixels that were transparent.
+    proptest! {
+        #[test]
+        fn normal_named_stays_in_table(
+            w in 1u32..12,
+            h in 1u32..12,
+            seed in 0u64..u64::MAX,
+        ) {
+            let mut st = seed | 1;
+            let img = image::ImageBuffer::from_fn(w, h, |_, _| {
+                let mut px = [0u8; 4];
+                for b in px.iter_mut() {
+                    st ^= st << 13;
+                    st ^= st >> 7;
+                    st ^= st << 17;
+                    *b = (st % 256) as u8;
+                }
+                Rgba(px)
+            });
+            for m in PaletteMode::ALL {
+                let Some(table) = m.fixed_table() else {
+                    continue; // Off/Auto/Gen16 have no fixed table
+                };
+                for d in Dither::ALL {
+                    let s = ResolvedSettings {
+                        pixel: "normal".parse().unwrap(),
+                        palette: m,
+                        dither: d,
+                        ..ResolvedSettings::resolve(&Default::default(), &Default::default())
+                    };
+                    let out = generate_from_image(&img, &s, (320, 180));
+                    for (x, y, px) in out.enumerate_pixels() {
+                        let src_a = img.get_pixel(x, y).0[3];
+                        if src_a <= 8 {
+                            prop_assert_eq!(
+                                px.0,
+                                [0, 0, 0, 0],
+                                "{m}/{d} @({x},{y})",
+                                m = m,
+                                d = d,
+                                x = x,
+                                y = y
+                            );
+                            continue;
+                        }
+                        prop_assert!(
+                            table.contains(px),
+                            "output {:?} @({}, {}) outside the {} table ({})",
+                            px.0, x, y, m, d
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// S3.5: dither is *honored* on `normal` (the wiring gap S3 exposed).
+    /// On photo128x80, (vga, fs) must differ from (vga, none) in bytes while
+    /// the shipped PNG colors stay in the VGA table (encode's re-map is
+    /// idempotent on a full 256-entry table); same byte assertion for
+    /// (auto, fs) — where the dither's *canvas* colors are inside the
+    /// auto palette and the shipped PNG colors are the encode's own
+    /// median_cut(255) re-map entries (the v0.1 Auto encode contract).
+    #[test]
+    fn normal_dither_changes_bytes_stays_in_palette() {
+        use image::Rgba;
+        let src = testsrc::photo128x80();
+        let run = |mode: PaletteMode, dither: Dither| -> (RgbaImage, Vec<u8>) {
+            let s = ResolvedSettings {
+                pixel: "normal".parse().unwrap(),
+                palette: mode,
+                dither,
+                ..ResolvedSettings::resolve(&Default::default(), &Default::default())
+            };
+            let canvas = generate_from_image(&src, &s, (320, 180));
+            let bytes = encode_variant(&canvas, mode);
+            (canvas, bytes)
+        };
+
+        // (vga, fs) vs (vga, none)
+        let (_, vga_none) = run(PaletteMode::Vga, Dither::None);
+        let (vga_canvas, vga_fs) = run(PaletteMode::Vga, Dither::FloydSteinberg);
+        assert_ne!(vga_none, vga_fs, "vga: dither must change the bytes");
+        let vga = PaletteMode::Vga.fixed_table().unwrap();
+        let back = decode_any(&vga_fs).unwrap();
+        for px in back.pixels() {
+            if px.0[3] <= 8 {
+                continue;
+            }
+            assert!(
+                vga.contains(&Rgba(px.0)),
+                "vga-fs: {px:?} outside the VGA table"
+            );
+        }
+        // (the canvas itself is on the table too)
+        for px in vga_canvas.pixels() {
+            if px.0[3] <= 8 {
+                continue;
+            }
+            assert!(vga.contains(&Rgba(px.0)), "vga-fs canvas: {px:?} off-table");
+        }
+
+        // (auto, fs) vs (auto, none)
+        let (_, auto_none) = run(PaletteMode::Auto, Dither::None);
+        let (auto_canvas, auto_fs) = run(PaletteMode::Auto, Dither::FloydSteinberg);
+        assert_ne!(auto_none, auto_fs, "auto: dither must change the bytes");
+        let allow = PaletteMode::Auto.accepts(&src).unwrap();
+        for px in auto_canvas.pixels() {
+            if px.0[3] <= 8 {
+                continue;
+            }
+            assert!(
+                allow.contains(&Rgba(px.0)),
+                "auto-fs canvas: {px:?} off-palette"
+            );
+        }
+        let cut = pipeline::median_cut(&auto_canvas, 255);
+        let back = decode_any(&auto_fs).unwrap();
+        for px in back.pixels() {
+            if px.0[3] <= 8 {
+                continue;
+            }
+            assert!(
+                cut.contains(&Rgba(px.0)),
+                "auto-fs PNG: {px:?} not a re-map entry"
+            );
+        }
+    }
+
+    /// S3.5 determinism: two runs of each new `normal` path produce equal
+    /// bytes — every (palette, dither) cell except the (auto, none) early
+    /// return, which the v0.1 golden already pins.
+    #[test]
+    fn normal_paths_are_deterministic() {
+        let src = testsrc::photo128x80();
+        for m in PaletteMode::ALL {
+            for d in Dither::ALL {
+                if m == PaletteMode::Auto && d == Dither::None {
+                    continue; // v0.1-identical early return (golden-pinned)
+                }
+                let s = ResolvedSettings {
+                    pixel: "normal".parse().unwrap(),
+                    palette: m,
+                    dither: d,
+                    ..ResolvedSettings::resolve(&Default::default(), &Default::default())
+                };
+                let b1 = encode_variant(&generate_from_image(&src, &s, (320, 180)), m);
+                let b2 = encode_variant(&generate_from_image(&src, &s, (320, 180)), m);
+                assert_eq!(b1, b2, "{m}/{d} not deterministic");
+            }
+        }
+    }
+
+    /// S3.5 goldens: `normal` preset end-to-end on photo128x80 — one per
+    /// representative cell: dithered auto, dithered vga, and the two named
+    /// nearest cases (nes, gen16). Checked in under tests/golden/normal/;
+    /// regenerate deliberately with PIX_UPDATE_GOLDENS=1.
+    #[test]
+    fn normal_golden_cells() {
+        use PaletteMode::*;
+        use std::io::Write as _;
+        let cells: [(&str, PaletteMode, Dither); 4] = [
+            ("auto-fs", Auto, Dither::FloydSteinberg),
+            ("vga-fs", Vga, Dither::FloydSteinberg),
+            ("nes-none", Nes, Dither::None),
+            ("gen16-none", Gen16, Dither::None),
+        ];
+        let src = testsrc::photo128x80();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/normal");
+        let regenerate = std::env::var_os("PIX_UPDATE_GOLDENS").is_some();
+        if regenerate {
+            std::fs::create_dir_all(&dir).unwrap();
+        }
+        for (cell, m, d) in cells {
+            let s = ResolvedSettings {
+                pixel: "normal".parse().unwrap(),
+                palette: m,
+                dither: d,
+                ..ResolvedSettings::resolve(&Default::default(), &Default::default())
+            };
+            let bytes = encode_variant(&generate_from_image(&src, &s, (320, 180)), m);
+            let path = dir.join(format!("{cell}.png"));
+            if regenerate {
+                let mut f = std::fs::File::create(&path).unwrap();
+                f.write_all(&bytes).unwrap();
+                continue;
+            }
+            let want = std::fs::read(&path).unwrap_or_else(|e| {
+                panic!(
+                    "missing golden {}: {e} (write it with PIX_UPDATE_GOLDENS=1)",
+                    path.display()
+                )
+            });
+            assert_eq!(
+                bytes, want,
+                "golden {cell} differs — intentional? re-run with PIX_UPDATE_GOLDENS=1"
+            );
+        }
+    }
+
+    /// S3.5 cache: a `normal` variant at (Q, D) gets the same v2 key shape as
+    /// any other variant — the key scheme already covers it, so this just
+    /// pins the normal names (the (auto, none) default keeps the v0.1 shape).
+    #[test]
+    fn normal_variant_path_shape() {
+        let p = |palette: PaletteMode, dither: Dither| {
+            let s = ResolvedSettings {
+                pixel: "normal".parse().unwrap(),
+                palette,
+                dither,
+                ..ResolvedSettings::resolve(&Default::default(), &Default::default())
+            };
+            variant_path(
+                &Paths::with_root("/tmp/x".as_ref()),
+                "id1",
+                &s,
+                (1920, 1080),
+            )
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+        };
+        assert_eq!(
+            p(PaletteMode::Auto, Dither::None),
+            format!("v{PIPELINE_VERSION}-normal-fit-1920x1080-auto.png")
+        );
+        assert_eq!(
+            p(PaletteMode::Vga, Dither::FloydSteinberg),
+            format!("v{PIPELINE_VERSION}-normal-fit-1920x1080-vga-fs.png")
+        );
+        assert_eq!(
+            p(PaletteMode::Off, Dither::Atkinson),
+            format!("v{PIPELINE_VERSION}-normal-fit-1920x1080-off-atkinson.png")
+        );
     }
 
     /// Named modes encode with exactly their table (deduped), index 0 =
