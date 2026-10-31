@@ -29,12 +29,14 @@ This is **correct at every scale tested** (effective 1.0 and 1.5 live;
 legacy scale events 1 and 2 — V6/V7); it's merely not *optimal* at
 fractional scales.
 
-## v0.2: exact fractional buffers
+## Deferred: exact fractional buffers (not in v0.2)
 
-Plan: bind `wp_viewporter` + `wp_fractional_scale_v1` when present, size
-buffers as `round(logical × frac_scale)`, keep the legacy integer path as
-fallback (compositors without fractional scale — most of them — keep
-working unchanged). Acceptance: same visual at 1.5 with a 3840×2160
+v0.2 shipped with the legacy oversampled path; this stays deferred
+(README "Deliberately not in v0.2"). Plan: bind `wp_viewporter` +
+`wp_fractional_scale_v1` when present, size buffers as
+`round(logical × frac_scale)`, keep the legacy integer path as fallback
+(compositors without fractional scale — most of them — keep working
+unchanged). Acceptance: same visual at 1.5 with a 3840×2160
 buffer on the dev panel; RSS drop to ~70 MB confirms it landed.
 
 ## Multi-output

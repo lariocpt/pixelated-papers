@@ -97,7 +97,8 @@ CLI.md.
 Expected micro-softness on the legacy path when the compositor reports a
 rounded-up integer scale while the real scale is fractional (1.5 etc):
 we oversample and the compositor downsamples once. Blocks stay blocks;
-edges soften slightly. Details and the v0.2 fix: [SCALING.md](SCALING.md).
+edges soften slightly. Details and the planned fix (deferred, not in
+v0.2): [SCALING.md](SCALING.md).
 
 ### Where's everything on disk?
 
