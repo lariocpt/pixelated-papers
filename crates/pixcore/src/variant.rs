@@ -33,6 +33,9 @@ pub struct VariantKey<'a> {
 /// — v2 carries the palette mode token (`-auto`, `-gen16`, …) and, when not
 /// `none`, the dither token: every (mode, dither) cell is its own cache
 /// entry (`Dither::None` omits the segment, keeping the v0.1 look's shape).
+/// An `auto` pixel is resolved to its concrete preset for `out` here, so
+/// cache filenames always name a concrete preset — `auto` never leaks into
+/// a filename (where it would be ambiguous with the `-auto` palette token).
 pub fn variant_path(paths: &Paths, id: &str, s: &ResolvedSettings, out: (u32, u32)) -> PathBuf {
     let g = if s.placement == Placement::CoverGutter {
         format!("-g{}", s.gutter_px)
@@ -54,7 +57,7 @@ pub fn variant_path(paths: &Paths, id: &str, s: &ResolvedSettings, out: (u32, u3
     };
     paths.variants_dir(id).join(format!(
         "v{PIPELINE_VERSION}-{pixel}-{placement}{g}-{W}x{H}-{Q}{D}{BL}.png",
-        pixel = s.pixel,
+        pixel = s.pixel.resolve_for(out),
         placement = s.placement,
         W = out.0,
         H = out.1,
@@ -72,12 +75,15 @@ pub fn generate(
     s: &ResolvedSettings,
     out: (u32, u32),
 ) -> Result<(PathBuf, bool)> {
-    let path = variant_path(paths, id, s, out);
+    // auto resolves to the concrete preset for this output BEFORE the
+    // cache key is built (the key must stay a concrete preset).
+    let s = s.resolved_for_output(out);
+    let path = variant_path(paths, id, &s, out);
     if path.exists() && fs::metadata(&path).map(|m| m.len() > 0).unwrap_or(false) {
         return Ok((path, true));
     }
     let orig = original_path(paths, id)?;
-    let generated = generate_from_file(&orig, s, out)?;
+    let generated = generate_from_file(&orig, &s, out)?;
     let bytes = encode_variant(&generated, s.palette);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| PixError::io(parent, e))?;
@@ -111,6 +117,9 @@ pub fn generate_from_image(
     s: &ResolvedSettings,
     out: (u32, u32),
 ) -> image::RgbaImage {
+    // auto → concrete preset for this output (block_px below must be
+    // concrete; resolving is idempotent for every other preset).
+    let s = &s.resolved_for_output(out);
     let v = crate::placement::view((orig.width(), orig.height()), out, s.placement, s.gutter_px);
     if s.pixel.is_identity() {
         // `normal`: the canvas is the dest itself — nearest stretch happens
@@ -304,6 +313,10 @@ pub fn render_offline(
     s: &ResolvedSettings,
     out: (u32, u32),
 ) -> Result<(image::RgbaImage, Vec<u8>)> {
+    // auto resolves per output before anything touches the cache (the
+    // variant key, the bleed key and the composite all see the concrete
+    // preset).
+    let s = &s.resolved_for_output(out);
     let (variant_path, _hit) = generate(paths, id, s, out)?;
     let bytes = fs::read(&variant_path).map_err(|e| PixError::io(&variant_path, e))?;
     let canvas = decode_any(&bytes)?;
@@ -473,7 +486,7 @@ pub fn bleed_path(paths: &Paths, id: &str, s: &ResolvedSettings, out: (u32, u32)
     };
     paths.variants_dir(id).join(format!(
         "bleed-v{PIPELINE_VERSION}-{pixel}-{W}x{H}-{Q}{D}.png",
-        pixel = s.pixel,
+        pixel = s.pixel.resolve_for(out),
         W = out.0,
         H = out.1,
         Q = s.palette,
@@ -510,6 +523,9 @@ pub fn bleed_layer(
     s: &ResolvedSettings,
     out: (u32, u32),
 ) -> Result<RgbaImage> {
+    // concrete preset before the cache key (and the block grid in
+    // build_bleed) — same rule as `generate`.
+    let s = &s.resolved_for_output(out);
     let p = bleed_path(paths, id, s, out);
     if p.exists() {
         if let Ok(bytes) = fs::read(&p) {
@@ -754,6 +770,66 @@ mod tests {
             bled_color,
             "bleed ring must carry wallpaper color, not flat bg"
         );
+    }
+
+    // ---- auto preset ----
+
+    #[test]
+    fn auto_pixel_never_leaks_into_cache_names() {
+        let paths = Paths::with_root(std::path::Path::new("/tmp/x"));
+        let auto = settings("auto");
+        let out = (1920, 1080);
+        // auto at 1920×1080 resolves to 16: the filename is exactly the
+        // explicit-16 variant's (the trailing `-auto` is the palette token;
+        // the pixel slot is always concrete).
+        let a = variant_path(&paths, "id1", &auto, out);
+        assert_eq!(a, variant_path(&paths, "id1", &settings("16"), out));
+        assert_eq!(
+            a.file_name().unwrap().to_string_lossy(),
+            format!("v{PIPELINE_VERSION}-16-fit-1920x1080-auto.png")
+        );
+        // a different output resolves to a different concrete preset
+        let big = variant_path(&paths, "id1", &auto, (3840, 2160));
+        assert!(
+            big.file_name().unwrap().to_string_lossy().contains("-32-"),
+            "{big:?}"
+        );
+        // the bleed cache name is concrete too
+        let mut bleed = auto;
+        bleed.gutter_style = GutterStyle::Bleed;
+        assert_eq!(
+            bleed_path(&paths, "id1", &bleed, out),
+            bleed_path(&paths, "id1", &settings("16"), out)
+        );
+    }
+
+    #[test]
+    fn auto_generates_the_bytes_of_its_resolved_preset() {
+        // The daemon/export must not be able to tell an auto entry from
+        // one pinned to the preset auto picks at that output: same cache
+        // file, same bytes, and the cache stays hit-shaped afterwards.
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dir.path());
+        let id = "auto1";
+        let entry = paths.entry_dir(id);
+        std::fs::create_dir_all(&entry).unwrap();
+        testsrc::photo128x80()
+            .save(entry.join("original.png"))
+            .unwrap();
+        let out = (320, 180); // long edge 320 → auto picks 8
+
+        let (auto_path, auto_hit) = generate(&paths, id, &settings("auto"), out).unwrap();
+        assert!(!auto_hit, "first generate is a miss");
+        let (want_path, _) = generate(&paths, id, &settings("8"), out).unwrap();
+        assert_eq!(
+            auto_path, want_path,
+            "auto must reuse the concrete cache entry"
+        );
+        let a = std::fs::read(&auto_path).unwrap();
+        let b = std::fs::read(&want_path).unwrap();
+        assert_eq!(a, b, "auto bytes must equal the resolved preset's bytes");
+        // and the second auto pass is a plain cache hit (no regeneration)
+        assert!(generate(&paths, id, &settings("auto"), out).unwrap().1);
     }
 
     // Acceptance (PLAN-30 A.4): every (palette, dither) cell is its own

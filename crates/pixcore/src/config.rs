@@ -242,6 +242,28 @@ mod tests {
         assert!(txt.contains("dither = \"atkinson\""), "{txt}");
     }
 
+    /// auto-preset: `default_pixel = "auto"` loads and saves; the default
+    /// config's saved bytes keep naming the concrete `16` (old configs and
+    /// new ones that never touch the knob stay byte-identical).
+    #[test]
+    fn auto_default_pixel_loads_and_saves() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "default_pixel = \"auto\"\n").unwrap();
+        assert_eq!(Config::load(&path).unwrap().default_pixel, Pixel::Auto);
+        let c = Config {
+            default_pixel: Pixel::Auto,
+            ..Default::default()
+        };
+        c.save(&path).unwrap();
+        let txt = fs::read_to_string(&path).unwrap();
+        assert!(txt.contains("default_pixel = \"auto\""), "{txt}");
+        let back = Config::load(&path).unwrap();
+        assert_eq!(back, c);
+        let s = toml::to_string(&Config::default()).unwrap();
+        assert!(s.contains("default_pixel = \"16\""), "{s}");
+    }
+
     #[test]
     fn daemon_backend_choice() {
         // §B.3: old configs (no daemon.backend) parse to auto; explicit

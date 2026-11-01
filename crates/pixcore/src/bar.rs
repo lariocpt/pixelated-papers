@@ -78,6 +78,15 @@ mod tests {
     }
 
     #[test]
+    fn auto_entry_says_auto() {
+        // The bar has no output size to resolve `auto` against, so it
+        // honestly shows the setting; the daemon's per-output render
+        // label is where the resolved preset shows up.
+        let r = resolved(Pixel::Auto, Placement::Fit);
+        assert_eq!(entry_line("w", &r), "▞ w · auto/fit");
+    }
+
+    #[test]
     fn no_entry_alive_is_set_one() {
         assert_eq!(bar_label(None, true), "▞ pixpapers — set one");
     }

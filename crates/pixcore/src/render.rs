@@ -48,6 +48,20 @@ impl ResolvedSettings {
             ..self
         }
     }
+
+    /// Resolve an `auto` pixel to the concrete preset for one output size
+    /// ([`Pixel::resolve_for`]); every other knob (and every concrete
+    /// pixel) passes through, so this is idempotent. **Every render path
+    /// must apply this before a variant cache key is built** — the cache
+    /// filenames stay concrete presets, and the daemon stays a pure
+    /// renderer (the resolution is a pure function of the output size,
+    /// no state).
+    pub fn resolved_for_output(self, out: (u32, u32)) -> Self {
+        Self {
+            pixel: self.pixel.resolve_for(out),
+            ..self
+        }
+    }
 }
 
 /// Stretch `variant` into `out` (output-sized RGBA) with bg fill.
@@ -308,5 +322,26 @@ mod tests {
             ResolvedSettings::resolve(&s, &cfg3).gutter_style,
             crate::GutterStyle::Bleed
         );
+        // auto: `resolve` keeps it (the output size is not known yet —
+        // that arrives at render time), `resolved_for_output` maps it to
+        // the concrete preset for one output, and concrete pixels pass
+        // through untouched.
+        let s_auto = Settings {
+            pixel: Some(Pixel::Auto),
+            ..Default::default()
+        };
+        let r_auto = ResolvedSettings::resolve(&s_auto, &cfg);
+        assert_eq!(r_auto.pixel, Pixel::Auto);
+        assert_eq!(r_auto.resolved_for_output((1920, 1080)).pixel, Pixel::B16);
+        assert_eq!(r_auto.resolved_for_output((3840, 2160)).pixel, Pixel::B32);
+        // idempotent, and never touches the other knobs
+        let twice = r_auto
+            .resolved_for_output((2560, 1440))
+            .resolved_for_output((2560, 1440));
+        assert_eq!(twice.pixel, Pixel::B32);
+        assert_eq!(twice.palette, r_auto.palette);
+        assert_eq!(r.resolved_for_output((3840, 2160)).pixel, Pixel::B16);
+        // R6 still wins over auto: disabled ⇒ normal, whatever auto would pick
+        assert_eq!(r_auto.unpixelated().pixel, Pixel::Normal);
     }
 }

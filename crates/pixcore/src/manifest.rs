@@ -231,6 +231,12 @@ mod tests {
         let back: Settings = serde_json::from_str(&j).unwrap();
         assert_eq!(back, s);
         assert_eq!(serde_json::to_string(&Settings::default()).unwrap(), "{}");
+        // auto-preset: the manifest stores the `auto` token like any other
+        // preset; old manifests (no field, or a concrete preset) are
+        // unaffected.
+        let auto: Settings = serde_json::from_str(r#"{"pixel":"auto"}"#).unwrap();
+        assert_eq!(auto.pixel, Some(Pixel::Auto));
+        assert_eq!(serde_json::to_string(&auto).unwrap(), r#"{"pixel":"auto"}"#);
     }
 
     #[test]
