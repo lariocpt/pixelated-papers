@@ -20,12 +20,14 @@ pub mod preset;
 pub mod preview;
 pub mod render;
 pub mod sixel;
+pub mod slideshow;
 pub mod variant;
 
 pub use bar::{bar_label, entry_line};
 pub use color::RgbCss;
 pub use config::BackendChoice;
 pub use config::Config;
+pub use config::Slideshow;
 pub use error::PixError;
 pub use gutter::GutterStyle;
 pub use manifest::{Entry, Library, Settings};

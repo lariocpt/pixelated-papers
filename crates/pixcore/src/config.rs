@@ -39,6 +39,9 @@ pub struct Config {
     pub dither: Dither,
     pub optimize: Optimize,
     pub daemon: DaemonConfig,
+    /// Timed cycling through the library. `enabled = false` (the default)
+    /// keeps the manual `set`/`cycle` behavior byte-for-byte as before.
+    pub slideshow: Slideshow,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -59,6 +62,17 @@ pub struct DaemonConfig {
     /// else a loud user error. A wrong explicit guess is also a loud
     /// error — no silent fallback chain.
     pub backend: BackendChoice,
+}
+
+/// Timed slideshow through the library. The daemon derives the showing
+/// entry from the wall clock, so there is no epoch/counter to persist —
+/// see [`crate::slideshow`]. `interval_secs` is the seconds per wallpaper;
+/// a value of `0` is treated as "off" by the pure model (never divides).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Slideshow {
+    pub enabled: bool,
+    pub interval_secs: u64,
 }
 
 /// Display backend selection (`daemon.backend`, §B.3). Pure config data;
@@ -86,6 +100,7 @@ impl Default for Config {
             dither: Dither::None,
             optimize: Optimize::default(),
             daemon: DaemonConfig::default(),
+            slideshow: Slideshow::default(),
         }
     }
 }
@@ -104,6 +119,17 @@ impl Default for DaemonConfig {
         Self {
             log: "info".into(),
             backend: BackendChoice::default(),
+        }
+    }
+}
+
+impl Default for Slideshow {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            // 5 minutes: long enough to be a "wallpaper", short enough to
+            // feel alive. A plain round number so it never looks arbitrary.
+            interval_secs: 300,
         }
     }
 }
@@ -274,5 +300,38 @@ mod tests {
         assert_eq!(cfg.daemon.backend, BackendChoice::X11);
         let s = toml::to_string(&Config::default()).unwrap();
         assert!(s.contains("backend = \"auto\""), "{s}");
+    }
+
+    /// The `[slideshow]` section is backward compatible: an old config with
+    /// no `[slideshow]` at all loads with the feature off and a 300s default
+    /// interval; the section still round-trips. Default saves stay off.
+    #[test]
+    fn slideshow_section_is_backward_compatible() {
+        // Absent ⇒ defaults (disabled, 300s), no error.
+        let cfg: Config = toml::from_str("enabled = true\n").unwrap();
+        assert!(!cfg.slideshow.enabled);
+        assert_eq!(cfg.slideshow.interval_secs, 300);
+
+        // Explicit section parses.
+        let cfg: Config =
+            toml::from_str("[slideshow]\nenabled = true\ninterval_secs = 120\n").unwrap();
+        assert!(cfg.slideshow.enabled);
+        assert_eq!(cfg.slideshow.interval_secs, 120);
+
+        // Round-trips, and the default config never turns it on.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let c = Config {
+            slideshow: crate::config::Slideshow {
+                enabled: true,
+                interval_secs: 45,
+            },
+            ..Default::default()
+        };
+        c.save(&path).unwrap();
+        assert_eq!(Config::load(&path).unwrap(), c);
+        let s = toml::to_string(&Config::default()).unwrap();
+        assert!(s.contains("enabled = false"), "{s}");
+        assert!(s.contains("interval_secs = 300"), "{s}");
     }
 }
