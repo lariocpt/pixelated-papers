@@ -609,3 +609,22 @@ frame on the X server.
 - A hard kill (`kill -9`, power loss) skips teardown and leaves the
   last frame — unchanged by design: the clear is a graceful-shutdown
   courtesy, not a persistence guarantee (docs/TROUBLESHOOTING).
+
+## release: v0.2.1 — icons, desktop entry, site logo (2026-11-01)
+
+Patch release over `2e2dd0c`: the app icon set (`9eb49ac`) and nothing
+else. No runtime code changed — pixcore is untouched and stays published
+at 0.2.0; pixpapers 0.2.1 declares `pixcore = "^0.2.0"`.
+
+- Icon tree audited: all 9 PNGs valid RGBA with dims matching their
+  hicolor dirs; `desktop-file-validate` on `contrib/pixpapers.desktop`
+  exits clean; the site favicon's embedded bytes are byte-identical to
+  the shipped `icons/hicolor/48x48/apps/pixpapers.png` (sha256
+  `004ee868…`).
+- Workspace gates at the release tree: 83 pixcore + 62 pixpapers tests
+  green · `clippy --workspace --all-targets -- -D warnings` clean ·
+  `fmt --check` clean · `env -u WAYLAND_DISPLAY test/smoke.sh` ok
+  (daemon layer skipped offline by design) · `test/verify-x11.sh` ok ·
+  `test/verify-tui.sh` ok (xvfb, all post-exit assertions held).
+- Tarball self-test behavior (`cargo test` inside the published crate)
+  is unchanged from the `2e2dd0c` proof: green with 33 skip notes.

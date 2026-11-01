@@ -222,7 +222,7 @@ remains field-report-driven (VERIFICATION V4/V5), as before.
   (bare `bail!` since v0.1 `10dbc8b`) — whose doc claim ("exits 1")
   was the bug, corrected doc-side in the S9 pass.
 
-## [Unreleased]
+## [0.2.1] - 2026-11-01
 
 ### Added
 - **App icon + launcher entry**: `icons/pixpapers.png` (1024 master) with
