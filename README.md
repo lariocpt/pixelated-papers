@@ -20,7 +20,7 @@ image, median-cut palette.
 ## Quickstart
 
 ```sh
-cargo install --path crates/pixpapers
+cargo install pixpapers            # from crates.io
 pixpapers add ~/Pictures/nebula.png
 pixpapers list                       # ids + current
 pixpapers set <id>                   # auto-starts the daemon
@@ -75,8 +75,12 @@ palette/dither rows come from `test/bench-sizes.sh` and
 
 ## Install
 
+- **From crates.io**: `cargo install pixpapers` (stable toolchain ≥ 1.85;
+  the `x11` and `tui` features are on by default —
+  `--no-default-features` for a wayland-only slim build).
 - **Arch**: PKGBUILD draft in [`contrib/packaging/`](contrib/packaging).
-- **From source**: `cargo install --path crates/pixpapers` (stable toolchain ≥ 1.85).
+- **From a clone**: `cargo install --path crates/pixpapers` — or
+  `cargo build --release` and drop `target/release/pixpapers` on your PATH.
 - Binary needs `WAYLAND_DISPLAY` (wayland) or `DISPLAY` (x11) to render —
   auto-detect prefers wayland when both are set; every other command works
   headless.
@@ -91,6 +95,7 @@ palette/dither rows come from `test/bench-sizes.sh` and
 | [docs/PERF.md](docs/PERF.md) | the measured numbers and their honest reading |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | daemon won't start, nothing shows, exit 43 |
 | [docs/VERIFICATION.md](docs/VERIFICATION.md) | what was actually tested, and what wasn't |
+| [crates.io/crates/pixpapers](https://crates.io/crates/pixpapers) | the published crate (`cargo install pixpapers`) |
 | [docs/PLAN.md](docs/PLAN.md) | design; build log — v0.1 steps 1→9, then the v0.2 workstreams |
 
 ## Tested with

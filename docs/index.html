@@ -178,6 +178,7 @@ footer a { color: var(--fg-muted); }
     </p>
     <div class="cta">
       <a class="btn hot" href="https://github.com/lariocpt/pixelated-papers">GitHub</a>
+      <a class="btn" href="https://crates.io/crates/pixpapers">crates.io</a>
       <a class="btn" href="https://github.com/lariocpt/pixelated-papers/releases/tag/v0.2.0">v0.2.0</a>
       <a class="btn" href="CLI.md">CLI reference</a>
     </div>
@@ -299,9 +300,10 @@ footer a { color: var(--fg-muted); }
 
   <section aria-label="Install and run">
     <h2><span class="h">##</span> install and run</h2>
-    <pre><code><span class="p">$ </span>git clone https://github.com/lariocpt/pixelated-papers
-<span class="p">$ </span>cd pixelated-papers &amp;&amp; cargo build --release
-<span class="p">$ </span>install -Dm755 target/release/pixpapers ~/.local/bin/pixpapers
+    <pre><code><span class="p">$ </span>cargo install pixpapers                    <span class="c"># crates.io</span>
+
+<span class="p">$ </span>git clone https://github.com/lariocpt/pixelated-papers
+<span class="p">$ </span>cd pixelated-papers &amp;&amp; cargo install --path crates/pixpapers
 
 <span class="p">$ </span>pixpapers add ~/Pictures/sunset.png        <span class="c"># auto-index, blake3 id</span>
 <span class="p">$ </span>pixpapers set 1fbb1234                   <span class="c"># daemon auto-starts</span>
@@ -329,6 +331,7 @@ footer a { color: var(--fg-muted); }
       <li role="listitem"><a href="PERF.md">PERF.md</a> — measured performance, with the walk-backs</li>
       <li role="listitem"><a href="TROUBLESHOOTING.md">TROUBLESHOOTING.md</a> — nothing shows / exit 43</li>
       <li role="listitem"><a href="VERIFICATION.md">VERIFICATION.md</a> — what was actually run, on what</li>
+      <li role="listitem"><a href="https://crates.io/crates/pixpapers">crates.io</a> — <code>cargo install pixpapers</code> (also <a href="https://crates.io/crates/pixcore">pixcore</a>)</li>
       <li role="listitem"><a href="https://github.com/lariocpt/pixelated-papers/blob/main/CHANGELOG.md">CHANGELOG</a> — release notes</li>
     </ul>
   </section>

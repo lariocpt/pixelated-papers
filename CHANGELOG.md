@@ -193,6 +193,13 @@ remains field-report-driven (VERIFICATION V4/V5), as before.
   module (sh + config).
 
 ### Changed
+- **Published on crates.io** (2026-11-01): `pixcore` and `pixpapers`
+  0.2.0 are on the registry — `cargo install pixpapers` installs the
+  release from crates.io (verified with an isolated registry install
+  that printed `pixpapers 0.2.0`). The workspace `pixcore` dependency
+  gained an explicit `version` and both manifests gained registry
+  metadata (`repository`, `keywords`, `categories`) as required
+  (`c60f2ed`).
 - **x11 stop clears the roots** (`1e79d00`): a graceful stop (and the
   best-effort exit-43 teardown) now clears every X root window to solid
   black, so a stopped daemon leaves no stray wallpaper frame on the X
