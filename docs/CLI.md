@@ -32,7 +32,7 @@ pixpapers -V | -h
 
 | Command | Values | Notes |
 |---|---|---|
-| `pixel <ID> <P>` | `8 16 32 64 128 normal` | Block size in pixels. `normal` = no pixelation for this wallpaper. |
+| `pixel <ID> <P>` | `8 16 32 64 128 normal auto` | Block size in pixels. `normal` = no pixelation for this wallpaper. `auto` = the preset is picked per output at render time: the smallest of 8/16/32/64/128 whose grid keeps the output's long edge at ≤ 120 blocks (≤960→8, ≤1920→16, ≤3840→32, ≤7680→64, else 128 — so 1920×1080 gets 16, the shipped default). Bigger output ⇒ coarser blocks, same blocky look; `auto` never picks `normal`. The resolved preset shows in the daemon's status label and in `export` output; the variant cache always stores concrete presets. |
 | `placement <ID> <PL>` | `fit cover-gutter cover-crop stretch` | See below. |
 | `bg <ID> <COLOR>` | `#rrggbb` | Letterbox / gutter color. |
 | `gutter <ID> <PX>` | `0..=4096` | Mat width for `cover-gutter` (px in output space). |
@@ -44,7 +44,7 @@ pixpapers -V | -h
 
 | Command | Meaning |
 |---|---|
-| `default pixel <P>` | Default preset for new entries and entries never set explicitly. |
+| `default pixel <P>` | Default preset for new entries and entries never set explicitly. Accepts `auto` (see `pixel`). |
 | `default placement <PL>` | Same for placement. |
 | `default palette <M>` | Same for the palette look. |
 | `default dither <D>` | Same for the dither. |
@@ -56,9 +56,9 @@ Changing a default re-applies to any *unset* current wallpaper immediately.
 
 | Command | Meaning |
 |---|---|
-| `status [--json] [--bench]` | Daemon truth when running (pid, outputs with live render label, enabled policy); filesystem view otherwise. The label is `{pixel}/{placement}-{palette}[-{dither}]` — e.g. `16/fit-auto`, `16/fit-vga-fs` — the same tokens as the variant cache key (the dither segment is omitted when `none`). `--bench` adds self-timed switch/render latencies, variant-cache hit rate, RSS + fd count. |
+| `status [--json] [--bench]` | Daemon truth when running (pid, outputs with live render label, enabled policy); filesystem view otherwise. The label is `{pixel}/{placement}-{palette}[-{dither}]` — e.g. `16/fit-auto`, `16/fit-vga-fs` — the same tokens as the variant cache key (the dither segment is omitted when `none`). For an `auto` entry the label's pixel slot names the preset resolved for that output (e.g. `32/fit-auto` on a 4K screen), so text and `--json` both show the look actually on screen. `--bench` adds self-timed switch/render latencies, variant-cache hit rate, RSS + fd count. |
 | `bar` | One line for a bar — the [waybar module's](contrib/waybar/README.md) text source. Character-exact: `▞ <title> · <pixel>/<placement-short>` while a current entry exists (even with the daemon dead — config+manifest truth through the daemon's own resolution chain, so the label never shows a look the daemon would not render), `▞ pixpapers — set one` with no entry and the daemon alive, `▞ pixpapers · daemon down` with the socket dead. Always exactly one line, always exit 0 (waybar's custom module auto-hides on empty output or a non-zero exit, so the module can never blink). Never writes, never spawns; works offline. |
-| `export <ID> <WxH> [--pixel P] [--placement PL] [--bg C] [--gutter N] [--gutter-style ST] [--palette M] [--dither D] [-o OUT]` | Offline render to PNG using the daemon's exact composite path — a preview that cannot lie. No daemon needed. `--palette`/`--dither`/`--gutter-style` override this render only (never persisted). Named modes write a palette PNG (PLTE = the table deduped by first occurrence, a transparent placeholder at index 0, and the bg colour merged in when absent); `off`/`auto` stay plain RGBA. |
+| `export <ID> <WxH> [--pixel P] [--placement PL] [--bg C] [--gutter N] [--gutter-style ST] [--palette M] [--dither D] [-o OUT]` | Offline render to PNG using the daemon's exact composite path — a preview that cannot lie. No daemon needed. `--palette`/`--dither`/`--gutter-style` override this render only (never persisted). `--pixel` accepts `auto` too: it resolves against the requested `WxH` (the daemon's exact rule), the wrote-line shows `auto→N`, and the default filename carries the concrete preset. Named modes write a palette PNG (PLTE = the table deduped by first occurrence, a transparent placeholder at index 0, and the bg colour merged in when absent); `off`/`auto` stay plain RGBA. |
 | `optimize [--all]` | Re-run the storage optimizer (PNG re-encode / strip cruft) over the library; `--all` includes entries unchanged since import. |
 | `completions <bash|zsh|fish>` | Shell completion script to stdout. |
 
@@ -80,7 +80,7 @@ nothing is printed to the terminal (errors included).
 | `a` | Add by path — input line; type/paste an image path (tilde-expanded), Enter | the CLI's own line: `added <id> · <title> · <W>×<H> · <optimize note> · <KB> KB`. Re-adding the same bytes is not an error: `already in library: <id> (<title>)`. `add` does not set current and does not Apply (CLI semantics) |
 | `s` | Set the selected entry current | `set <id> · <title> (applied)` — `(recorded — will show when the daemon runs)` when the daemon is down and cannot be spawned |
 | `c` | Cycle current to the next entry (1 step) | `cycle → <id> · <title> (<state>)` |
-| `p` | Cycle pixel `8→16→32→64→128→normal` | `<id> → pixel <v>` (plus ` (not current — will apply on set)` when the edited entry is not current) |
+| `p` | Cycle pixel `8→16→32→64→128→normal→auto` | `<id> → pixel <v>` (plus ` (not current — will apply on set)` when the edited entry is not current). The caption shows an `auto` entry's resolved preset for the preview canvas (`pixel auto→8`) |
 | `l` | Cycle placement `fit→cover-gutter→cover-crop→stretch` | `<id> → placement <v>` |
 | `t` | Cycle palette `off→auto→nes→gb→cga→ega→vga→gen16` | `<id> → palette <v>` |
 | `d` | Cycle dither `none→fs→atkinson→bayer2→bayer4→bayer8` | `<id> → dither <v>` |
@@ -209,4 +209,7 @@ typed `PixError` exits 1 unless it is the catch-all `Other`;
 Variant keys are `v2-<pixel>-<placement>[-g<g>]-<W>x<H>-<Q>[-<D>].png`:
 `<Q>` is the palette token (always present — `-auto`, `-nes`, …) and
 `<D>` the dither token, present only when the dither isn't `none`. The
-`v2` prefix invalidates v0.1 caches (they are disposable).
+`v2` prefix invalidates v0.1 caches (they are disposable). `<pixel>` is
+always a concrete preset: an `auto` entry resolves per output size
+before the key is built, so `auto` shares the concrete preset's cache
+entry and never names a file.

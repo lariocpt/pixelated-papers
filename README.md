@@ -34,7 +34,10 @@ user unit in [`contrib/`](contrib/).
 
 ## Concepts in ten lines
 
-- **Preset** = block size: `8 | 16 | 32 | 64 | 128 | normal`. Default **16**.
+- **Preset** = block size: `8 | 16 | 32 | 64 | 128 | normal | auto`.
+  Default **16**. `auto` picks the preset from each output's size at
+  render time — the smallest preset leaving ≤ 120 blocks on the long edge
+  (1080p→16, 4K→32, 8K→64), so the look stays consistently blocky.
 - **Placement** = how the image meets the screen: `fit` (letterbox, default),
   `cover-gutter` (image inside a colored mat), `cover-crop`, `stretch`.
 - `bg_color` is the border/gutter color per wallpaper (default black).
@@ -138,8 +141,9 @@ arbitration, last one wins.
   `commands::*` as the only state path and `status --json` the only read
   face. The TUI is the GUI for now.
 - **Live/animated wallpapers** — one static look, done fast.
-- **Auto-preset by image content** — you pick the look; the tool doesn't
-  guess.
+- **Auto-preset by image content** — `auto` picks the preset from the
+  output's *size*, never from the picture: you pick the look; the tool
+  doesn't guess from pixels.
 - **MPRIS-ish hooks** — no media-stack integration.
 - **Exact fractional buffers** (viewporter/fractional-scale) — a separate
   track; current buffer sizing covers everything the tested matrix uses.

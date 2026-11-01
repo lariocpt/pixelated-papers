@@ -19,11 +19,11 @@ WAYLAND_DISPLAY=wayland-1 test/verify-waybar.sh
 WAYLAND_DISPLAY=wayland-1 test/bench-daemon.sh target/release/pixpapers 25
 ```
 
-Tests: 83 pixcore (config atomicity + legacy palette bool, manifest
+Tests: 99 pixcore (config atomicity + legacy palette bool, manifest
 version guard + palette/dither knobs, placement proptests + short tokens,
 bar-label goldens, quantize goldens + v0.1 byte-identity goldens
 (presets and `normal`), versioned variant cache, preview canvas/guard,
-sixel encoder). The daemon's
+sixel encoder, auto-preset rule (proptest) + cache-name concreteness). The daemon's
 IPC/loop logic runs against in-process harnesses — headless is normal.
 The CLI goldens run the **built** `pixpapers` binary and refuse one that
 is stale relative to the sources that compile into it (`cargo test` alone
@@ -93,8 +93,10 @@ the same change.
 
 ## Deferred by decision, not by omission
 
-Blurred-bleed gutter variant (plan §10 open question — `cover-gutter`
-shipped as mat-margin), GUI window, live wallpapers, auto-preset,
-MPRIS-ish hooks, exact fractional buffers, headless-sway CI. Don't
-"helpfully" implement these without asking; they're v0.2+ scoped on
-purpose.
+GUI window, live wallpapers, auto-preset **by image content** (the
+shipped `auto` preset picks from the output size only — the picture
+itself is never analysed), MPRIS-ish hooks, exact fractional buffers,
+headless-sway CI. Don't "helpfully" implement these without asking;
+they're v0.2+ scoped on purpose. (The blurred-bleed gutter shipped at
+25f9a90 as `gutter-style bleed`; the by-output-size auto-preset shipped
+after it — both were on this list until they shipped.)

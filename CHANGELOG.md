@@ -7,6 +7,26 @@ Semantic Versioning. The build log behind each area lives in
 ## [Unreleased]
 
 ### Added
+- **`auto` pixel preset**: the pixel look can pick itself from the output's
+  size instead of being hand-set per wallpaper. `auto` is accepted wherever a
+  preset is — `pixpapers pixel <ID> auto`, `pixpapers default pixel auto`,
+  `export --pixel auto` (render-only), and the TUI `p` cycle — and resolves
+  per output at render time to **the smallest of 8/16/32/64/128 whose grid
+  keeps the output's long edge at ≤ 120 blocks**: ≤960→8, ≤1920→16,
+  ≤3840→32, ≤7680→64, else 128. Bigger screen ⇒ coarser blocks, so the
+  blocky look stays the same size everywhere; 1920×1080 resolves to 16,
+  exactly the shipped default (the 120 budget is `1920/16`). `auto` never
+  picks `normal`. The rule is a pure function of the output size
+  (`pixcore::Pixel::resolve_for`, proptested monotone + concrete), the
+  variant cache is keyed by the *resolved* preset (filenames stay concrete,
+  `auto` shares the pinned preset's cache entry), and the resolved preset is
+  observable: the daemon's per-output status label (`32/fit-auto` on 4K, in
+  `status` and `status --json`), the export wrote-line (`auto→32`), and the
+  TUI caption (`pixel auto→8` at the preview canvas). TOML:
+  `default_pixel = "auto"`; manifests store `"pixel": "auto"`. Old configs
+  and manifests load byte-identically; no version bump. This is the
+  AGENTS.md "Deferred by decision" item, built on explicit request — it is
+  auto-preset **by output size**, the "by image content" idea stays out.
 - **`gutter-style`** on a `cover-gutter` wallpaper: how the ring around the
   picture is filled. `solid` (default) is the flat `bg_color` mat; `bleed`
   fills the ring with the wallpaper's own edges, blurred (a box-downscale)

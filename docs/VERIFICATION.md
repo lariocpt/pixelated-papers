@@ -729,3 +729,70 @@ so steady-state re-renders amortize it away.
   settings snapshot) · `test/verify-x11.sh` ok (root pixmap byte-identical to the
   oracle under the `solid` default). TUI goldens regenerated (10 frames; caption
   gained the `gutter style solid` row, HINTS gained `G style`).
+
+## auto-preset: preset chosen from output size (20-11-01, this change)
+
+### The rule (pixcore, pure)
+
+`pixcore::Pixel::resolve_for(out)` — the smallest preset from
+`8/16/32/64/128` whose grid keeps the output's **long edge** at
+≤ `AUTO_MAX_BLOCKS = 120` blocks: `L ≤ 960 → 8`, `≤ 1920 → 16`,
+`≤ 3840 → 32`, `≤ 7680 → 64`, else `128`. The budget is `1920/16`, so
+1920×1080 resolves to the shipped default preset exactly. `auto` never
+picks `normal`; concrete presets pass through (idempotent). Grounded in
+the plan's parked idea (step-6 §6.4: the floor/auto question, "bigger
+output ⇒ coarser pixel" for a consistent blocky look); it is auto by
+**output size**, not by image content (that stays deferred).
+
+### Cache integrity
+
+Every `variant.rs` entry point (`variant_path`, `generate`,
+`generate_from_image`, `render_offline`, `bleed_path`, `bleed_layer`)
+resolves `auto` **before the cache key is built** — filenames always name
+a concrete preset (an `auto` pixel slot would also be ambiguous with the
+`-auto` palette token). Proven by `auto_pixel_never_leaks_into_cache_names`
+(path equality with the pinned preset) and
+`auto_generates_the_bytes_of_its_resolved_preset` (same file, same bytes,
+second pass is a cache hit).
+
+### Resolution is observable
+
+- daemon `render_into` resolves per output; the status label names the
+  resolved preset (`8/fit-auto` at 320×180 in
+  `render_label_names_the_resolved_preset_for_auto`; `32/fit-auto` on a
+  4K output in the field) — visible in `status` text and
+  `status --json` `outputs[].variant`.
+- `export --pixel auto` prints `auto→N` and the default filename carries
+  the concrete preset (`export_pixel_auto_resolves_to_concrete_bytes`).
+- TUI caption shows `pixel auto→N` for the preview canvas
+  (`caption_resolves_auto_for_the_canvas`); `p` cycle reaches `auto`.
+
+### Demo + gates at this tree
+
+- Three real `export --pixel auto` renders of `docs/img/source.png`
+  (release binary, hermetic `PIXPAPERS_HOME`):
+  `docs/img/auto-960x540.png` (14 KB, `auto→8`),
+  `docs/img/auto-1920x1080.png` (45 KB, `auto→16`),
+  `docs/img/auto-3840x2160.png` (165 KB, `auto→32`).
+  **Byte-identity proof:** each is `cmp`-clean against the same export
+  with the preset pinned by hand (`--pixel 8/16/32` at the same size).
+  **Block-width proof:** modal constant-colour run length along sampled
+  rows = exactly 8 / 16 / 32 output px respectively; all three are 120
+  blocks across (the rule's budget). The website section shows these
+  files with their resolved presets; zero-external-requests re-verified
+  (all `src` are `img/*.png` or `data:`; no fetch/XHR/@import;
+  `web_check` at 360 px: no console errors, no failed requests, no
+  horizontal overflow; `web_performance`: `horizontal_overflow: 0`, no
+  image over 300 KB).
+- Workspace gates: **99 pixcore + 66 pixpapers tests green** (was 92+63;
+  +7 pixcore: parse/serde, ladder table, pass-through/idempotence,
+  proptest monotone+concrete+idempotent, resolve_policy, config +
+  manifest round-trips, bar; +3 pixpapers: export byte-identity, daemon
+  label, caption). `cargo build --release` clean ·
+  `clippy --workspace --all-targets -- -D warnings` clean ·
+  `cargo fmt --check` clean · `env -u WAYLAND_DISPLAY test/smoke.sh` ok ·
+  `test/verify-x11.sh` ok (root pixmap still byte-identical to the
+  oracle — default path untouched) · `test/verify-tui.sh` ok (B-knob
+  golden stays at its 6 keys; `p` one step from 16 is still 32). TUI
+  goldens **not** regenerated — no caption row or HINTS change, the 10
+  pinned 100×30 frames are byte-identical (goldens test green).
