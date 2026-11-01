@@ -239,6 +239,50 @@ footer a { color: var(--fg-muted); }
     </figure>
   </section>
 
+  <section id="auto" aria-label="Auto preset">
+    <style>
+      #auto .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 1.25rem 0 .5rem; }
+      #auto .grid figure { margin: 0; }
+      #auto .grid figcaption b { color: var(--accent); }
+      #auto .note { font-size: .86rem; color: var(--fg-muted); }
+      @media (max-width: 720px) { #auto .grid { grid-template-columns: 1fr; } }
+    </style>
+    <h2><span class="h">##</span> auto preset</h2>
+    <p>
+      Don't want to hand-pick a block size per screen? Set the pixel knob to
+      <code>auto</code> and the preset is chosen from each output's size at
+      render time: the smallest of <code>8/16/32/64/128</code> whose grid
+      keeps the long edge at ≤ 120 blocks. Bigger screen, coarser blocks —
+      the same blocky look at every size. Below: the same source exported at
+      three output sizes with <code>--pixel auto</code>; each is exactly 120
+      blocks across.
+    </p>
+    <div class="grid">
+      <figure>
+        <img src="img/auto-960x540.png" width="960" height="540" alt="The sunset wallpaper pixelated by the auto preset at 960 by 540, which resolves to 8 pixel blocks" loading="lazy">
+        <figcaption>960×540 → <b>pixel 8</b></figcaption>
+      </figure>
+      <figure>
+        <img src="img/auto-1920x1080.png" width="1920" height="1080" alt="The sunset wallpaper pixelated by the auto preset at full HD, which resolves to 16 pixel blocks" loading="lazy">
+        <figcaption>1920×1080 → <b>pixel 16</b> — the shipped default, picked automatically</figcaption>
+      </figure>
+      <figure>
+        <img src="img/auto-3840x2160.png" width="3840" height="2160" alt="The sunset wallpaper pixelated by the auto preset at 4K, which resolves to 32 pixel blocks" loading="lazy">
+        <figcaption>3840×2160 → <b>pixel 32</b></figcaption>
+      </figure>
+    </div>
+    <p class="note">
+      Real <code>pixpapers export … --pixel auto</code> renders, each
+      byte-identical (<code>cmp</code>) to the same export with that preset
+      pinned by hand. The resolved preset is never a secret: the daemon's
+      per-output status label names it (<code>32/fit-auto</code> on 4K, in
+      <code>status</code> and <code>status --json</code>), the export line
+      says <code>auto→32</code>, and the variant cache only ever stores
+      concrete presets. <code>auto</code> picks from the output's size —
+      never from the picture.
+    </p>
+  </section>
+
   <section aria-label="Where it runs">
     <h2><span class="h">##</span> where it runs</h2>
     <p>
