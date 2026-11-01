@@ -56,6 +56,12 @@ enum Cmd {
         #[command(subcommand)]
         what: DefaultWhat,
     },
+    /// Timed slideshow through the library (live wallpapers). The daemon
+    /// picks the wallpaper from the wall clock, so it survives a restart.
+    Slideshow {
+        #[command(subcommand)]
+        what: SlideshowWhat,
+    },
     /// Force pixelation on for everything (default)
     Enable,
     /// Turn pixelation off (originals only, placement unchanged)
@@ -128,6 +134,21 @@ enum DefaultWhat {
     Palette { palette: PaletteMode },
     Dither { dither: Dither },
     GutterStyle { style: GutterStyle },
+}
+
+#[derive(Subcommand)]
+enum SlideshowWhat {
+    /// Start cycling the library (optionally set the seconds per wallpaper
+    /// in the same call, e.g. `slideshow on 120`)
+    On {
+        /// Seconds each wallpaper shows (omit to keep the current interval)
+        #[arg(value_name = "SECONDS")]
+        interval: Option<u64>,
+    },
+    /// Stop cycling — show the manually set/cycled wallpaper again
+    Off,
+    /// Change how long each wallpaper shows (seconds), keeping on/off as-is
+    Interval { seconds: u64 },
 }
 
 pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
@@ -213,6 +234,18 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
                     commands::set_default_gutter_style(paths, &mut cfg, style)?
                 }
             }
+            apply_now(paths);
+        }
+        Cmd::Slideshow { what } => {
+            let mut cfg = cfg.clone();
+            let action = match what {
+                SlideshowWhat::On { interval } => commands::SlideshowAction::On { interval },
+                SlideshowWhat::Off => commands::SlideshowAction::Off,
+                SlideshowWhat::Interval { seconds } => {
+                    commands::SlideshowAction::Interval { secs: seconds }
+                }
+            };
+            commands::set_slideshow(paths, &mut cfg, action)?;
             apply_now(paths);
         }
         Cmd::Enable | Cmd::Disable => {

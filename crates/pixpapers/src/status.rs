@@ -20,6 +20,10 @@ pub fn local_report(paths: &Paths, cfg: &Config) -> StatusReport {
         variants_on_disk,
         variant_bytes,
         bench: None,
+        // A stopped daemon schedules nothing, so `next_change` stays `None`;
+        // the enabled flag still reflects the config the user set.
+        slideshow_enabled: Some(cfg.slideshow.enabled),
+        next_change: None,
     }
 }
 
@@ -70,6 +74,17 @@ pub fn print_report(r: &StatusReport, cfg: &Config, json: bool) {
         cfg.dither
     );
     println!("current:  {}", r.current.as_deref().unwrap_or("(none)"));
+    if r.slideshow_enabled == Some(true) {
+        // Only shown when the user turned the slideshow on, so the default
+        // (off) status output is unchanged.
+        match r.next_change {
+            Some(next) => {
+                let secs = next.saturating_sub(pixcore::slideshow::now_unix());
+                println!("slideshow: on · next change in {secs}s");
+            }
+            None => println!("slideshow: on · daemon stopped"),
+        }
+    }
     if r.outputs.is_empty() {
         println!(
             "outputs:  {}",

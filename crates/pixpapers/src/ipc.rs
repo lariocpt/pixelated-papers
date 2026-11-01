@@ -65,6 +65,16 @@ pub struct StatusReport {
     pub variant_bytes: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bench: Option<BenchReport>,
+    /// Whether the timed slideshow is on (live wallpapers). Additive, like
+    /// `backend`: `skip_serializing_if` keeps a pre-feature report byte-identical
+    /// and lets an old client ignore it; a new client reading an old report
+    /// sees `None` (nothing to show).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slideshow_enabled: Option<bool>,
+    /// Unix second of the next clock-driven change, present only when the
+    /// slideshow is on. `None` when off or when the interval is degenerate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_change: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -122,4 +132,66 @@ fn io_err(e: impl std::fmt::Display) -> std::io::Error {
 /// Does a daemon appear to be listening?
 pub fn daemon_alive(socket: &std::path::Path) -> bool {
     roundtrip(socket, &Request::Status, Duration::from_millis(700)).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    //! The slideshow status fields are an additive JSON-lines change: a
+    //! report without them (a pre-feature daemon, or one with the feature
+    //! off) must serialize to the exact old shape and a new client must read
+    //! an old report as `None`. This is the wire-contract guarantee for live
+    //! wallpapers — no version bump, old peers unaffected.
+    use super::*;
+
+    fn base_report() -> StatusReport {
+        StatusReport {
+            daemon_running: true,
+            daemon_pid: Some(1),
+            enabled: true,
+            default_pixel: "16".into(),
+            default_placement: "fit".into(),
+            current: Some("abc".into()),
+            outputs: vec![],
+            backend: Some("layer".into()),
+            variants_on_disk: 0,
+            variant_bytes: 0,
+            bench: None,
+            slideshow_enabled: None,
+            next_change: None,
+        }
+    }
+
+    #[test]
+    fn slideshow_fields_are_skipped_when_absent() {
+        // Feature off / pre-feature daemon: neither key is emitted, so the
+        // JSON bytes are identical to the shape before the feature existed.
+        let json = serde_json::to_string(&base_report()).unwrap();
+        assert!(!json.contains("slideshow_enabled"), "{json}");
+        assert!(!json.contains("next_change"), "{json}");
+    }
+
+    #[test]
+    fn old_report_shape_deserializes_to_none() {
+        // Hand-written pre-feature JSON (no slideshow keys, `backend` present
+        // as it was already additive) must load with both new fields None.
+        let old = r#"{"daemon_running":true,"daemon_pid":null,"enabled":true,
+            "default_pixel":"16","default_placement":"fit","current":null,
+            "outputs":[],"variants_on_disk":0,"variant_bytes":0}"#;
+        let r: StatusReport = serde_json::from_str(old).unwrap();
+        assert_eq!(r.slideshow_enabled, None);
+        assert_eq!(r.next_change, None);
+    }
+
+    #[test]
+    fn new_report_shape_round_trips() {
+        let mut r = base_report();
+        r.slideshow_enabled = Some(true);
+        r.next_change = Some(1_700_000_000);
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"slideshow_enabled\":true"), "{json}");
+        assert!(json.contains("\"next_change\":1700000000"), "{json}");
+        let back: StatusReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.slideshow_enabled, Some(true));
+        assert_eq!(back.next_change, Some(1_700_000_000));
+    }
 }

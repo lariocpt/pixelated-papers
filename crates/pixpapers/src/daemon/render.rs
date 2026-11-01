@@ -53,11 +53,14 @@ pub fn render_into(
     ))
 }
 
-/// The current entry to display, or None if nothing is set / gone.
-pub fn current_entry(paths: &Paths) -> Option<Entry> {
+/// The entry to display right now: with the slideshow enabled this is the
+/// wall-clock-selected slot; otherwise the manifest's `current` (the manual
+/// `set`/`cycle` target). Delegates to the pure [`pixcore::slideshow`] model
+/// so the daemon holds no slideshow state — it just reads the clock.
+pub fn active_entry(paths: &Paths) -> Option<Entry> {
     let lib = pixcore::Library::load(paths).ok()?;
-    let cur = lib.current?;
-    lib.entries.iter().find(|e| e.id == cur).cloned()
+    let cfg = Config::load(&paths.config_file).ok()?;
+    pixcore::slideshow::active_entry(&cfg, &lib, pixcore::slideshow::now_unix()).cloned()
 }
 
 #[cfg(test)]

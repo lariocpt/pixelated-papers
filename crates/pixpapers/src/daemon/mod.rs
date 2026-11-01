@@ -190,6 +190,18 @@ pub fn run_foreground(paths: Paths, cfg: &Config, backend: Option<&str>) -> Resu
     // reports the display side of that.
     let mut quit = false;
 
+    // Live-wallpaper (slideshow) loop state. The daemon keeps NO slideshow
+    // state of its own — which entry is showing is recomputed from the wall
+    // clock every time it is needed. `slide` caches the config's slideshow
+    // section so the poll *timeout* can be derived without re-reading the
+    // config every idle tick (that would change the idle cost when off); it
+    // is refreshed from disk on every `Apply`. `last_active` is the id of the
+    // entry currently on screen, so a timed wake renders only on a real
+    // change. When the slideshow is off the loop is byte-identical to before
+    // (fixed 300 ms beat, no extra disk reads).
+    let mut slide = cfg.slideshow.clone();
+    let mut last_active = render::active_entry(&paths).map(|e| e.id);
+
     while !quit && !backend.connection_lost() && SHUTDOWN.load(std::sync::atomic::Ordering::SeqCst)
     {
         // Pre-poll pump: flush requests queued by the previous tick's
@@ -199,9 +211,25 @@ pub fn run_foreground(paths: Paths, cfg: &Config, backend: Option<&str>) -> Resu
         // poll over [backend fd, socket fd]; a backend without a display
         // fd is polled on the socket alone. The backend fd in the poll set
         // wakes the loop when the connection has events.
+        //
+        // Timed wake-up (live wallpapers): when the slideshow is on, sleep
+        // only until the next slot boundary instead of the fixed 300 ms beat
+        // — never a busy-wait (`secs_to_next_change` is ≥ 1 s), and never
+        // past a real change. The backend and socket fds still wake the poll
+        // early for compositor events and IPC, and SIGTERM/SIGINT still
+        // interrupt it. When off, the beat is exactly the old 300 ms.
+        let timeout = if slide.enabled {
+            let now = pixcore::slideshow::now_unix();
+            Duration::from_secs(pixcore::slideshow::secs_to_next_change(
+                now,
+                slide.interval_secs,
+            ))
+        } else {
+            Duration::from_millis(300)
+        };
         let sock_ready = match backend.poll_fd() {
-            Some(fd) => poll2(fd, sock_fd, Duration::from_millis(300)).1,
-            None => poll2(-1, sock_fd, Duration::from_millis(300)).1,
+            Some(fd) => poll2(fd, sock_fd, timeout).1,
+            None => poll2(-1, sock_fd, timeout).1,
         };
         // Post-poll pump: drain the connection — flush, prepare_read →
         // read → dispatch_pending, the documented manual-loop pattern, now
@@ -210,8 +238,26 @@ pub fn run_foreground(paths: Paths, cfg: &Config, backend: Option<&str>) -> Resu
         backend.pump();
 
         // IPC: accept + serve one client per tick (commands are tiny)
-        if sock_ready && handle_client(&listener, &mut backend, &paths) {
-            quit = true;
+        if sock_ready {
+            if handle_client(
+                &listener,
+                &mut backend,
+                &paths,
+                &mut slide,
+                &mut last_active,
+            ) {
+                quit = true;
+            }
+        } else if slide.enabled {
+            // A timed wake with no IPC and no compositor event: the clock may
+            // have crossed into a new slot. Render only if it actually
+            // changed. Deliberately *not* recorded in the apply bench, which
+            // measures interactive `Apply` latency, not background advances.
+            let now_active = render::active_entry(&paths).map(|e| e.id);
+            if now_active.is_some() && now_active != last_active {
+                backend.render_all(&paths);
+                last_active = now_active;
+            }
         }
 
         if !SHUTDOWN.load(std::sync::atomic::Ordering::SeqCst) {
@@ -325,8 +371,16 @@ fn prepare_socket(sock: &Path) -> Result<()> {
 }
 
 /// Accept + serve one client (read a line, act, reply, close). Returns
-/// true when the client asked the daemon to quit.
-fn handle_client(listener: &UnixListener, backend: &mut ActiveBackend, paths: &Paths) -> bool {
+/// true when the client asked the daemon to quit. On `Apply` it also refreshes
+/// the loop's cached slideshow section and the on-screen id, so a `slideshow`
+/// knob change or a manual `set`/`cycle` re-syncs the timed advance immediately.
+fn handle_client(
+    listener: &UnixListener,
+    backend: &mut ActiveBackend,
+    paths: &Paths,
+    slide: &mut pixcore::Slideshow,
+    last_active: &mut Option<String>,
+) -> bool {
     let (stream, _) = match listener.accept() {
         Ok(s) => s,
         Err(_) => return false,
@@ -358,6 +412,14 @@ fn handle_client(listener: &UnixListener, backend: &mut ActiveBackend, paths: &P
             // The bench lives behind the trait (§B.3); both backends feed
             // the same counters into `status --bench`.
             backend.record_apply(t0.elapsed().as_millis() as u64);
+            // Re-sync the timed advance from the state the CLI just wrote:
+            // `slideshow on|off|interval` may have changed the beat, and a
+            // manual `set`/`cycle` moved the on-screen entry. Reload the
+            // section (cheap, once per command — never per idle tick) and
+            // record what is now actually on screen.
+            let cfg = Config::load(&paths.config_file).unwrap_or_default();
+            *slide = cfg.slideshow.clone();
+            *last_active = render::active_entry(paths).map(|e| e.id);
             let _ = reply(&stream, &Response::ok(None));
             false
         }
@@ -406,6 +468,17 @@ fn status_report(backend: &ActiveBackend, paths: &Paths) -> StatusReport {
             rss_kb: self_rss_kb(),
             fds: self_fds(),
         }),
+        slideshow_enabled: Some(cfg.slideshow.enabled),
+        // A live promise only when the slideshow can actually change: enabled,
+        // a real interval, and at least one entry to advance to.
+        next_change: if cfg.slideshow.enabled && !lib.entries.is_empty() {
+            pixcore::slideshow::next_change_unix(
+                pixcore::slideshow::now_unix(),
+                cfg.slideshow.interval_secs,
+            )
+        } else {
+            None
+        },
     }
 }
 

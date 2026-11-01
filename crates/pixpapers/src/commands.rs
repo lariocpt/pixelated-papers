@@ -258,6 +258,55 @@ pub fn set_default_gutter_style(paths: &Paths, cfg: &mut Config, style: GutterSt
     Ok(())
 }
 
+/// The three `pixpapers slideshow …` verbs, resolved to a config mutation.
+pub enum SlideshowAction {
+    /// Turn cycling on; optionally set the interval in the same call.
+    On { interval: Option<u64> },
+    /// Turn cycling off (back to the manual `set`/`cycle` wallpaper).
+    Off,
+    /// Change the seconds-per-wallpaper, leaving on/off untouched.
+    Interval { secs: u64 },
+}
+
+/// `pixpapers slideshow on|off|interval <sec>`: mutate the `[slideshow]`
+/// section and persist (atomic). An interval of `0` is rejected as a user
+/// error (exit 1) rather than stored — the pure model treats it as "off", but
+/// a `0`-second cycle is never what someone meant.
+pub fn set_slideshow(paths: &Paths, cfg: &mut Config, action: SlideshowAction) -> Result<()> {
+    match action {
+        SlideshowAction::On { interval } => {
+            if let Some(secs) = interval {
+                if secs == 0 {
+                    return Err(anyhow::Error::from(UserError(
+                        "interval must be at least 1 second".into(),
+                    )));
+                }
+                cfg.slideshow.interval_secs = secs;
+            }
+            cfg.slideshow.enabled = true;
+            cfg.save(&paths.config_file).context("save config")?;
+            println!("slideshow: on · every {}s", cfg.slideshow.interval_secs);
+        }
+        SlideshowAction::Off => {
+            cfg.slideshow.enabled = false;
+            cfg.save(&paths.config_file).context("save config")?;
+            println!("slideshow: off · showing the manually set wallpaper");
+        }
+        SlideshowAction::Interval { secs } => {
+            if secs == 0 {
+                return Err(anyhow::Error::from(UserError(
+                    "interval must be at least 1 second".into(),
+                )));
+            }
+            cfg.slideshow.interval_secs = secs;
+            cfg.save(&paths.config_file).context("save config")?;
+            let state = if cfg.slideshow.enabled { "on" } else { "off" };
+            println!("slideshow interval: {secs}s ({state})");
+        }
+    }
+    Ok(())
+}
+
 /// Offline render (no daemon) — `pixpapers export`.
 pub fn export(
     paths: &Paths,

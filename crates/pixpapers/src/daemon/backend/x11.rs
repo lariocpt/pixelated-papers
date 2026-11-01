@@ -264,7 +264,7 @@ impl X11Backend {
                 return;
             }
         };
-        let Some(entry) = render::current_entry(&self.paths) else {
+        let Some(entry) = render::active_entry(&self.paths) else {
             log::debug!("no current entry; skipping render");
             return;
         };
