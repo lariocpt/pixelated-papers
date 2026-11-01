@@ -628,3 +628,24 @@ at 0.2.0; pixpapers 0.2.1 declares `pixcore = "^0.2.0"`.
   `test/verify-tui.sh` ok (xvfb, all post-exit assertions held).
 - Tarball self-test behavior (`cargo test` inside the published crate)
   is unchanged from the `2e2dd0c` proof: green with 33 skip notes.
+
+### Release-chain evidence (post-tag)
+
+- The first real `makepkg` run caught the draft PKGBUILD's `cd` bug
+  (`$pkgname-$pkgver` doesn't exist for a `git+` source — the working
+  dir is `$srcdir/$pkgname`). Fixed in `3004d81`; the v0.2.1 tag was
+  force-moved to it before anything consumed the old one.
+- `makepkg -d` from the pushed tag: `check()` ran the full workspace
+  suite green (83+62, release, `--locked`); package() completed; the
+  pkg tar contains `usr/share/applications/pixpapers.desktop` and all
+  8 `usr/share/icons/hicolor/…/apps/pixpapers.png` paths (listed).
+- GitHub Release `v0.2.1` created; source tarball sha256
+  `9349ef0b…d4eef9de` (recorded in the release notes).
+- `cargo publish -p pixpapers` → pixpapers 0.2.1 live on crates.io
+  (pixcore stays 0.2.0). `cargo install pixpapers --root …` resolves
+  and reports **0.2.1**.
+- Registry `.crate` extracted, bare `cargo test`: 62 passed / 0 failed
+  with exactly 33 `note: skipping CLI golden` lines (`--nocapture`) —
+  the `2e2dd0c` self-test signature holds on the real 0.2.1 crate.
+- Pages rebuilt: live site serves the PNG `data:` favicon and the
+  v0.2.1 strings (release link + footer).
