@@ -49,25 +49,6 @@ normal`, default 16) on a wlr-layer-shell Background surface, niri-first.
   intentional).
 - 72 h soak (V15) pending.
 
-## [Unreleased]
-
-### Fixed
-- **`cargo test` inside a published crate tarball no longer fails** (35
-  failures → 0). The suite used two files that live *outside*
-  `crates/pixpapers` and therefore ship nowhere: the repo fixture
-  `test/fixture.png` and the staleness guard's sibling `../pixcore/src`
-  walk (a `read_dir` panic that took down every CLI golden first). The
-  crate now ships its own byte-identical fixture copy
-  (`tests/fixtures/fixture.png`, drift-guarded by a test); the guard
-  skips the sibling walk when there is no workspace; and the 33 goldens
-  that shell out to the *built* binary skip with a printed note in a
-  tarball, where a plain `cargo test` produces no such artifact.
-  Workspace behavior is unchanged — a missing or stale binary stays a
-  loud failure there. Proven on the real 0.2.0 registry `.crate`: bare
-  `cargo test` all green with the notes; `cargo build && cargo test`
-  runs the goldens for real inside the tarball, against the registry
-  pixcore.
-
 ## [0.2.0] - 2026-11-01
 
 v0.2: retro palettes & dithering, an X11 backend, a terminal UI and a
@@ -240,3 +221,34 @@ remains field-report-driven (VERIFICATION V4/V5), as before.
   convention); a second foreground `daemon` while one runs stays 2
   (bare `bail!` since v0.1 `10dbc8b`) — whose doc claim ("exits 1")
   was the bug, corrected doc-side in the S9 pass.
+
+## [Unreleased]
+
+### Added
+- **App icon + launcher entry**: `icons/pixpapers.png` (1024 master) with
+  LANCZOS hicolor sizes {16,24,32,48,64,128,256,512}, palette-matched to
+  the site (#0f1114/#f7b32b/#39c08f); `contrib/pixpapers.desktop`
+  (`Exec=foot -e pixpapers tui`, `Icon=pixpapers`; `desktop-file-validate`
+  clean). The PKGBUILD installs the desktop entry to
+  `usr/share/applications` and the PNGs to the matching
+  `usr/share/icons/hicolor` paths; its `pkgver` now tracks the release
+  whose checkout first carries the icon tree. The site favicon is the
+  logo itself — the 48px app icon inlined as a `data:` URI (byte-identical
+  to the shipped PNG; still one file, zero external requests).
+
+### Fixed
+- **`cargo test` inside a published crate tarball no longer fails** (35
+  failures → 0). The suite used two files that live *outside*
+  `crates/pixpapers` and therefore ship nowhere: the repo fixture
+  `test/fixture.png` and the staleness guard's sibling `../pixcore/src`
+  walk (a `read_dir` panic that took down every CLI golden first). The
+  crate now ships its own byte-identical fixture copy
+  (`tests/fixtures/fixture.png`, drift-guarded by a test); the guard
+  skips the sibling walk when there is no workspace; and the 33 goldens
+  that shell out to the *built* binary skip with a printed note in a
+  tarball, where a plain `cargo test` produces no such artifact.
+  Workspace behavior is unchanged — a missing or stale binary stays a
+  loud failure there. Proven on the real 0.2.0 registry `.crate`: bare
+  `cargo test` all green with the notes; `cargo build && cargo test`
+  runs the goldens for real inside the tarball, against the registry
+  pixcore.

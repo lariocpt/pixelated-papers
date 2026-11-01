@@ -16,4 +16,6 @@ Cargo.lock.bak
 !crates/**/tests/golden/**
 # the fixture the published crate ships for itself (see harness.rs)
 !crates/pixpapers/tests/fixtures/**
+# the app icon set — the canonical artwork + hicolor sizes (see contrib/)
+!icons/**
 !test/fixture.png

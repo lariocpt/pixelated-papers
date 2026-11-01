@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=pixpapers
+GenericName=Wallpaper picker
+Comment=Forced-pixelation wallpapers — pick, set and tune from the TUI
+Exec=foot -e pixpapers tui
+Icon=pixpapers
+Terminal=false
+Categories=Utility;Graphics;
+Keywords=wallpaper;background;pixel;pixelart;niri;
+StartupNotify=false
