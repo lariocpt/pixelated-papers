@@ -49,6 +49,25 @@ normal`, default 16) on a wlr-layer-shell Background surface, niri-first.
   intentional).
 - 72 h soak (V15) pending.
 
+## [Unreleased]
+
+### Fixed
+- **`cargo test` inside a published crate tarball no longer fails** (35
+  failures → 0). The suite used two files that live *outside*
+  `crates/pixpapers` and therefore ship nowhere: the repo fixture
+  `test/fixture.png` and the staleness guard's sibling `../pixcore/src`
+  walk (a `read_dir` panic that took down every CLI golden first). The
+  crate now ships its own byte-identical fixture copy
+  (`tests/fixtures/fixture.png`, drift-guarded by a test); the guard
+  skips the sibling walk when there is no workspace; and the 33 goldens
+  that shell out to the *built* binary skip with a printed note in a
+  tarball, where a plain `cargo test` produces no such artifact.
+  Workspace behavior is unchanged — a missing or stale binary stays a
+  loud failure there. Proven on the real 0.2.0 registry `.crate`: bare
+  `cargo test` all green with the notes; `cargo build && cargo test`
+  runs the goldens for real inside the tarball, against the registry
+  pixcore.
+
 ## [0.2.0] - 2026-11-01
 
 v0.2: retro palettes & dithering, an X11 backend, a terminal UI and a

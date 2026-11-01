@@ -21,8 +21,76 @@ use pixcore::{Dither, PaletteMode, Paths};
 use crate::ipc::Request;
 
 /// The repo's shared test fixture (`crates/pixpapers` → `test/fixture.png`).
+///
+/// That path is outside the crate, so a published crate tarball does not
+/// carry it — it ships its own copy at `tests/fixtures/fixture.png`
+/// (kept byte-identical by `bundled_fixture_matches_repo_fixture`).
+/// Falling back to it is what lets the CLI goldens run inside an unpacked
+/// `.crate`; in a workspace checkout the shared file always wins, so the
+/// fixture every script and golden uses stays the single canonical one.
 pub(crate) fn fixture() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixture.png")
+    let shared = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixture.png");
+    if shared.exists() {
+        return shared;
+    }
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fixture.png")
+}
+
+/// True outside a full workspace checkout — i.e. inside a published crate
+/// tarball, where the workspace `pixcore` sources are gone (it comes from
+/// the registry instead) and the repo-level `test/` tree is not shipped.
+/// Detection is the sibling source dir, not a `cfg`: the same test binary
+/// has to behave differently in the two trees.
+pub(crate) fn is_packaged() -> bool {
+    !Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../pixcore/src")
+        .is_dir()
+}
+
+/// Where the binary [`Home::cli`] drives lives. `CARGO_BIN_EXE_pixpapers` is
+/// set for integration test targets; unit tests inside the bin never get it,
+/// so the fallback reconstructs `target/<profile>/pixpapers` from the test
+/// binary's location.
+fn cli_binary_path() -> PathBuf {
+    std::env::var_os("CARGO_BIN_EXE_pixpapers")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let exe = std::env::current_exe().unwrap();
+            let deps = exe
+                .parent()
+                .expect("test binary lives in a deps/ directory");
+            deps.parent()
+                .expect("deps/ lives in a target directory")
+                .join("pixpapers")
+        })
+}
+
+/// Early-return guard for the CLI goldens: `true` means *this environment
+/// cannot run them at all* — a crate tarball with no built binary — so the
+/// test must not fail. `#[test]` fns use it as
+/// `if skip_without_cli_binary() { return; }` as their first statement.
+///
+/// Deliberately narrow: it skips only when the binary **cannot exist**
+/// here. A *stale* binary is never skipped, packaged or not — that is an
+/// accident the mtime check in [`fresh_bin`] must keep shouting about, and
+/// quietly passing would hide it.
+pub(crate) fn skip_without_cli_binary() -> bool {
+    if !is_packaged() || cli_binary_path().exists() {
+        return false;
+    }
+    eprintln!(
+        "note: skipping CLI golden — a crate tarball has no built pixpapers \
+         binary (`cargo build --release` before `cargo test` runs these)"
+    );
+    true
+}
+
+/// The workspace `pixcore` source tree, when this checkout has one.
+/// `fresh_bin` watches it because pixcore changes rebuild the binary; a
+/// published crate tarball has no such directory, so the walk is skipped.
+fn sibling_pixcore_src() -> Option<PathBuf> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../pixcore/src");
+    path.is_dir().then_some(path)
 }
 
 /// Refuse to run the CLI goldens against a missing or stale binary.
@@ -42,14 +110,21 @@ fn fresh_bin(bin: &Path) {
     let mut newest: Option<(SystemTime, PathBuf)> = None;
     let pp_src = manifest.join("src");
     walk_mtime(&pp_src, &pp_src, &mut newest, &test_only_paths(&pp_src));
-    let pc_src = manifest.join("../pixcore/src");
-    walk_mtime(&pc_src, &pc_src, &mut newest, &test_only_paths(&pc_src));
+    // The workspace pixcore tree only exists in a full checkout; a crate
+    // tarball resolves pixcore from the registry, so there is nothing to
+    // watch and walking a missing dir would panic before any real check.
+    if let Some(pc_src) = sibling_pixcore_src() {
+        walk_mtime(&pc_src, &pc_src, &mut newest, &test_only_paths(&pc_src));
+    }
     for toml in ["Cargo.toml", "../pixcore/Cargo.toml"] {
         let path = manifest.join(toml);
-        let t = std::fs::metadata(&path)
-            .unwrap_or_else(|e| panic!("{path:?} unreadable: {e}"))
-            .modified()
-            .unwrap();
+        let t = match std::fs::metadata(&path) {
+            Ok(m) => m.modified().unwrap(),
+            // Missing only means "crate tarball, no workspace pixcore
+            // manifest"; any other error is a broken checkout — stay loud.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => panic!("{path:?} unreadable: {e}"),
+        };
         if newest.is_none() || t > newest.as_ref().unwrap().0 {
             newest = Some((t, path));
         }
@@ -213,25 +288,12 @@ impl Home {
         }
     }
 
-    /// The real `pixpapers` binary. `CARGO_BIN_EXE_pixpapers` is set for
-    /// integration test targets; unit tests living inside a bin never get
-    /// it (and a plain `cargo test` does not rebuild the plain bin
-    /// artifact either), so the fallback reconstructs
-    /// `target/<profile>/pixpapers` from the test binary's location.
-    /// Either way the binary must be fresh (see [`fresh_bin`]): goldens
-    /// run against a stale build would silently pass stale behavior.
+    /// The real `pixpapers` binary; see [`cli_binary_path`] for where it
+    /// lives and [`fresh_bin`] for why it must be fresh. Tests that call
+    /// this must be guarded with [`skip_without_cli_binary`] (no built
+    /// binary exists in a crate tarball to fail against).
     pub(crate) fn bin() -> PathBuf {
-        let path = std::env::var_os("CARGO_BIN_EXE_pixpapers")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                let exe = std::env::current_exe().unwrap();
-                let deps = exe
-                    .parent()
-                    .expect("test binary lives in a deps/ directory");
-                deps.parent()
-                    .expect("deps/ lives in a target directory")
-                    .join("pixpapers")
-            });
+        let path = cli_binary_path();
         fresh_bin(&path);
         path
     }
@@ -348,6 +410,9 @@ impl DaemonHarness {
 /// printed on the edit line, visible in the manifest bytes.
 #[test]
 fn cli_palette_round_trips() {
+    if skip_without_cli_binary() {
+        return;
+    }
     let home = Home::new();
     let (code, out, err) = home.cli(&["add", fixture().to_str().unwrap(), "--title", "fixture"]);
     assert_eq!(code, 0, "add failed:\n{out}\n{err}");
@@ -371,6 +436,9 @@ fn cli_palette_round_trips() {
 /// Every dither value round-trips the same way.
 #[test]
 fn cli_dither_round_trips() {
+    if skip_without_cli_binary() {
+        return;
+    }
     let home = Home::new();
     let (code, out, err) = home.cli(&["add", fixture().to_str().unwrap(), "--title", "fixture"]);
     assert_eq!(code, 0, "add failed:\n{out}\n{err}");
@@ -395,6 +463,9 @@ fn cli_dither_round_trips() {
 /// the entries' own knobs at None (inherit).
 #[test]
 fn cli_default_palette_dither() {
+    if skip_without_cli_binary() {
+        return;
+    }
     let home = Home::new();
     let (code, out, err) = home.cli(&["add", fixture().to_str().unwrap(), "--title", "fixture"]);
     assert_eq!(code, 0, "add failed:\n{out}\n{err}");
@@ -436,6 +507,9 @@ fn cli_default_palette_dither() {
 /// daemon — the same contract the pixel/placement/bg/gutter edits have.
 #[test]
 fn cli_edit_current_entry_applies() {
+    if skip_without_cli_binary() {
+        return;
+    }
     let home = Home::new();
     let (code, out, err) = home.cli(&["add", fixture().to_str().unwrap(), "--title", "current"]);
     assert_eq!(code, 0, "add failed:\n{out}\n{err}");
@@ -462,6 +536,9 @@ fn cli_edit_current_entry_applies() {
 /// Editing a non-current entry only records the change — no daemon traffic.
 #[test]
 fn cli_edit_non_current_entry_records_only() {
+    if skip_without_cli_binary() {
+        return;
+    }
     let home = Home::new();
     let (code, out, err) = home.cli(&["add", fixture().to_str().unwrap(), "--title", "current"]);
     assert_eq!(code, 0, "add failed:\n{out}\n{err}");
@@ -494,6 +571,9 @@ fn cli_edit_non_current_entry_records_only() {
 /// see the direction: from the second, -1 lands on the first.
 #[test]
 fn cli_cycle_negative_parses_and_steps_back() {
+    if skip_without_cli_binary() {
+        return;
+    }
     let home = Home::new();
     let (code, out, err) = home.cli(&["add", fixture().to_str().unwrap(), "--title", "a"]);
     assert_eq!(code, 0, "add a failed:\n{out}\n{err}");
@@ -527,6 +607,9 @@ fn cli_cycle_negative_parses_and_steps_back() {
 /// wallpaper keeps its name offline. Fresh home ⇒ defaults 16/fit.
 #[test]
 fn bar_current_entry_dead_daemon() {
+    if skip_without_cli_binary() {
+        return;
+    }
     let home = Home::new();
     let (code, out, err) = home.cli(&["add", fixture().to_str().unwrap(), "--title", "nebula"]);
     assert_eq!(code, 0, "add failed:\n{out}\n{err}");
@@ -542,6 +625,9 @@ fn bar_current_entry_dead_daemon() {
 /// never changes the entry case (it only disambiguates a missing entry).
 #[test]
 fn bar_current_entry_alive_daemon() {
+    if skip_without_cli_binary() {
+        return;
+    }
     let home = Home::new();
     let (code, out, err) = home.cli(&["add", fixture().to_str().unwrap(), "--title", "nebula"]);
     assert_eq!(code, 0, "add failed:\n{out}\n{err}");
@@ -559,6 +645,9 @@ fn bar_current_entry_alive_daemon() {
 /// `ipc::daemon_alive` needs.
 #[test]
 fn bar_no_entry_alive_daemon() {
+    if skip_without_cli_binary() {
+        return;
+    }
     let home = Home::new();
     DaemonHarness::start(&home.paths);
 
@@ -570,6 +659,9 @@ fn bar_no_entry_alive_daemon() {
 /// No current entry + a dead socket: the daemon-down line.
 #[test]
 fn bar_no_entry_dead_daemon() {
+    if skip_without_cli_binary() {
+        return;
+    }
     let home = Home::new();
 
     let (code, out, err) = home.cli(&["bar"]);
@@ -586,6 +678,9 @@ fn bar_no_entry_dead_daemon() {
 /// merged only when absent) and whose pixels all live in that table.
 #[test]
 fn export_palette_vga_dither_fs() {
+    if skip_without_cli_binary() {
+        return;
+    }
     let home = Home::new();
     let (code, out, err) = home.cli(&["add", fixture().to_str().unwrap(), "--title", "fixture"]);
     assert_eq!(code, 0, "add failed:\n{out}\n{err}");
@@ -674,6 +769,9 @@ fn export_palette_vga_dither_fs() {
 /// `export --palette off` stays plain RGBA — the v0.1 shape.
 #[test]
 fn export_palette_off_is_rgba() {
+    if skip_without_cli_binary() {
+        return;
+    }
     let home = Home::new();
     let (code, out, err) = home.cli(&["add", fixture().to_str().unwrap(), "--title", "fixture"]);
     assert_eq!(code, 0, "add failed:\n{out}\n{err}");
@@ -701,6 +799,9 @@ fn export_palette_off_is_rgba() {
 /// RGBA: 255 + bg would not fit the ≤255 v0.1 scheme.
 #[test]
 fn export_default_auto_is_rgba() {
+    if skip_without_cli_binary() {
+        return;
+    }
     let home = Home::new();
     let (code, out, err) = home.cli(&["add", fixture().to_str().unwrap(), "--title", "fixture"]);
     assert_eq!(code, 0, "add failed:\n{out}\n{err}");
@@ -720,4 +821,34 @@ fn export_default_auto_is_rgba() {
     let info = reader.info().clone();
     assert_eq!(info.color_type, png::ColorType::Rgba);
     assert_eq!((info.width, info.height), (320, 180));
+}
+
+/// The fixture [`fixture`] falls back to (`tests/fixtures/fixture.png`) is
+/// the one shipped inside the published crate, where the repo-level
+/// `test/fixture.png` does not exist. This guard keeps the two
+/// byte-identical in the checkout that *does* have both: a silent drift
+/// would mean the published crate tests a different image than the repo
+/// suite does. In a crate tarball there is nothing to compare against, so
+/// the check reports itself as skipped rather than passing unnoticed.
+#[test]
+fn bundled_fixture_matches_repo_fixture() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let shared = manifest.join("../../test/fixture.png");
+    let bundled = manifest.join("tests/fixtures/fixture.png");
+    if !shared.exists() {
+        assert!(
+            bundled.exists(),
+            "crate tarball must ship its own fixture at {}",
+            bundled.display()
+        );
+        eprintln!("note: fixture drift guard skipped — no repo fixture in a crate tarball");
+        return;
+    }
+    assert_eq!(
+        std::fs::read(&shared).unwrap(),
+        std::fs::read(&bundled).unwrap(),
+        "{} must stay byte-identical to the canonical {}",
+        bundled.display(),
+        shared.display()
+    );
 }

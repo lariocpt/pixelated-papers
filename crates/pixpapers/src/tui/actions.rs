@@ -1000,6 +1000,9 @@ mod tests {
     /// original file is byte-identical (deterministic re-encode).
     #[test]
     fn add_by_path_matches_cli_add() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let cli_home = Home::new();
         let tui_home = Home::new();
         let src = crate::harness::fixture();
@@ -1038,6 +1041,9 @@ mod tests {
 
     #[test]
     fn set_current_applies_and_moves_selection() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let (home, id0, id1) = two_entry_home();
         crate::commands::set_current(&home.paths, &id0).unwrap();
         let harness = DaemonHarness::start(&home.paths);
@@ -1099,6 +1105,9 @@ mod tests {
 
     #[test]
     fn set_with_no_listener_records_only() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let _headless = HeadlessGuard::new();
         let (home, id0, id1) = two_entry_home();
         crate::commands::set_current(&home.paths, &id0).unwrap();
@@ -1124,6 +1133,9 @@ mod tests {
 
     #[test]
     fn cycle_rotates_and_applies() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let (home, id0, id1) = two_entry_home();
         crate::commands::set_current(&home.paths, &id0).unwrap();
         let harness = DaemonHarness::start(&home.paths);
@@ -1175,6 +1187,9 @@ mod tests {
 
     #[test]
     fn pixel_cycle_on_current_applies() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let (home, id0, _) = two_entry_home();
         crate::commands::set_current(&home.paths, &id0).unwrap();
         let harness = DaemonHarness::start(&home.paths);
@@ -1204,6 +1219,9 @@ mod tests {
 
     #[test]
     fn placement_cycle_on_current_applies() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let (home, id0, _) = two_entry_home();
         crate::commands::set_current(&home.paths, &id0).unwrap();
         let harness = DaemonHarness::start(&home.paths);
@@ -1226,6 +1244,9 @@ mod tests {
 
     #[test]
     fn palette_cycle_on_current_applies() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let (home, id0, _) = two_entry_home();
         crate::commands::set_current(&home.paths, &id0).unwrap();
         let harness = DaemonHarness::start(&home.paths);
@@ -1248,6 +1269,9 @@ mod tests {
 
     #[test]
     fn dither_cycle_on_current_applies() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let (home, id0, _) = two_entry_home();
         crate::commands::set_current(&home.paths, &id0).unwrap();
         let harness = DaemonHarness::start(&home.paths);
@@ -1270,6 +1294,9 @@ mod tests {
 
     #[test]
     fn knob_cycle_on_non_current_records_only() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let (home, id0, id1) = two_entry_home();
         crate::commands::set_current(&home.paths, &id0).unwrap();
         let harness = DaemonHarness::start(&home.paths);
@@ -1298,6 +1325,9 @@ mod tests {
 
     #[test]
     fn bg_input_on_current_applies() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let (home, id0, _) = two_entry_home();
         crate::commands::set_current(&home.paths, &id0).unwrap();
         let harness = DaemonHarness::start(&home.paths);
@@ -1318,6 +1348,9 @@ mod tests {
 
     #[test]
     fn bg_input_bad_value_is_a_status_error() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let (home, id0, _) = two_entry_home();
         crate::commands::set_current(&home.paths, &id0).unwrap();
         let harness = DaemonHarness::start(&home.paths);
@@ -1335,6 +1368,9 @@ mod tests {
 
     #[test]
     fn gutter_input_on_current_applies() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let (home, id0, _) = two_entry_home();
         crate::commands::set_current(&home.paths, &id0).unwrap();
         let harness = DaemonHarness::start(&home.paths);
@@ -1354,6 +1390,9 @@ mod tests {
 
     #[test]
     fn gutter_input_bad_value_is_a_status_error() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let (home, _id0, _) = two_entry_home();
         let mut app = app_for(&home);
         key(&mut app, KeyCode::Char('g'));
@@ -1367,6 +1406,9 @@ mod tests {
 
     #[test]
     fn remove_confirmed_clears_dir_and_manifest() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let (home, id0, _) = two_entry_home();
         crate::commands::set_current(&home.paths, &id0).unwrap();
         let harness = DaemonHarness::start(&home.paths);
@@ -1393,6 +1435,9 @@ mod tests {
 
     #[test]
     fn remove_cancelled_touches_nothing() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let (home, id0, _) = two_entry_home();
         let harness = DaemonHarness::start(&home.paths);
         let mut app = app_for(&home);
@@ -1413,6 +1458,9 @@ mod tests {
 
     #[test]
     fn remove_non_current_entry_no_apply() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let (home, id0, id1) = two_entry_home();
         crate::commands::set_current(&home.paths, &id0).unwrap();
         let harness = DaemonHarness::start(&home.paths);
@@ -1441,6 +1489,9 @@ mod tests {
 
     #[test]
     fn toggle_enable_disable_applies() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let home = Home::new();
         let (code, out, err) = home.cli(&[
             "add",
@@ -1480,6 +1531,9 @@ mod tests {
 
     #[test]
     fn export_goes_to_the_download_dir() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let home = Home::new();
         let (code, out, err) = home.cli(&[
             "add",
@@ -1514,6 +1568,9 @@ mod tests {
 
     #[test]
     fn refresh_picks_up_external_changes() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let home = Home::new();
         let mut app = app_for(&home);
         assert!(app.lib.entries.is_empty());
@@ -1544,6 +1601,9 @@ mod tests {
     /// parseable and no `*.tmp` residue — pixcore's temp+rename writes.
     #[test]
     fn mid_apply_sequence_stays_consistent() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
         let (home, id0, id1) = two_entry_home();
         crate::commands::set_current(&home.paths, &id0).unwrap();
         let harness = DaemonHarness::start(&home.paths);
