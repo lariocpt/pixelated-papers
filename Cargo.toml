@@ -11,7 +11,7 @@ repository = "https://github.com/lariocpt/pixelated-papers"
 description = "Forced-pixelation wallpapers for niri and other wayland compositors"
 
 [workspace.dependencies]
-pixcore = { path = "crates/pixcore" }
+pixcore = { path = "crates/pixcore", version = "0.2.0" }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp", "tiff", "ico"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

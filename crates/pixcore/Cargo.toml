@@ -4,7 +4,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Core pixelation, placement, and library logic for pixelated-papers (no wayland)"
+keywords = ["pixelation", "image", "palette", "dither", "wallpaper"]
+categories = ["graphics", "multimedia::images"]
 
 [dependencies]
 image = { workspace = true }

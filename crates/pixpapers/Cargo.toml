@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://lariocpt.github.io/pixelated-papers/"
 description.workspace = true
 readme = "../../README.md"
 keywords = ["wayland", "niri", "wallpaper", "pixel-art", "layer-shell"]
