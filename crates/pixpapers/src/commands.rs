@@ -6,8 +6,8 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use pixcore::{
-    Config, Dither, Entry, Library, PaletteMode, Paths, Pixel, Placement, ResolvedSettings,
-    Settings,
+    Config, Dither, Entry, GutterStyle, Library, PaletteMode, Paths, Pixel, Placement,
+    ResolvedSettings, Settings,
 };
 
 /// A user-condition error: a bad id, an empty library, an unparseable
@@ -249,6 +249,15 @@ pub fn set_default_dither(paths: &Paths, cfg: &mut Config, p: Dither) -> Result<
     Ok(())
 }
 
+/// `pixpapers default gutter-style <solid|bleed>`: the ring style new /
+/// unset entries inherit.
+pub fn set_default_gutter_style(paths: &Paths, cfg: &mut Config, style: GutterStyle) -> Result<()> {
+    cfg.default_gutter_style = style;
+    cfg.save(&paths.config_file).context("save config")?;
+    println!("default gutter-style: {style}");
+    Ok(())
+}
+
 /// Offline render (no daemon) — `pixpapers export`.
 pub fn export(
     paths: &Paths,
@@ -315,6 +324,7 @@ fn merge_settings(base: &Settings, over: &Settings) -> Settings {
         gutter_px: over.gutter_px.or(base.gutter_px),
         palette: over.palette.or(base.palette),
         dither: over.dither.or(base.dither),
+        gutter_style: over.gutter_style.or(base.gutter_style),
     }
 }
 

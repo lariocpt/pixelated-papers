@@ -29,7 +29,16 @@ pub fn render_into(
     let bytes = std::fs::read(&variant_path).map_err(anyhow::Error::from)?;
     let canvas = pixcore::variant::decode_any(&bytes).map_err(anyhow::Error::from)?;
     let view = pixcore::view((entry.width, entry.height), out, s.placement, s.gutter_px);
-    pixcore::render::composite_into(&canvas, &view, s.bg_color, buf);
+    // A `bleed` gutter composites the wallpaper's blurred edges as the ring
+    // background — the same `bleed_layer` + `composite_into_with_bleed` the
+    // offline `export` path uses, so `export` previews exactly this frame.
+    let bleed = match s.gutter_style {
+        pixcore::GutterStyle::Solid => None,
+        pixcore::GutterStyle::Bleed => {
+            Some(pixcore::variant::bleed_layer(paths, &entry.id, &s, out)?)
+        }
+    };
+    pixcore::render::composite_into_with_bleed(&canvas, &view, s.bg_color, bleed.as_ref(), buf);
     let d = if s.dither == pixcore::Dither::None {
         String::new()
     } else {

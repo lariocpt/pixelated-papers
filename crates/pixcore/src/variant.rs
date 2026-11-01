@@ -10,6 +10,7 @@ use image::{Rgba, RgbaImage};
 
 use crate::PIPELINE_VERSION;
 use crate::error::{PixError, Result};
+use crate::gutter::GutterStyle;
 use crate::optimize;
 use crate::palette::{self, Dither, PaletteMode};
 use crate::paths::Paths;
@@ -43,14 +44,23 @@ pub fn variant_path(paths: &Paths, id: &str, s: &ResolvedSettings, out: (u32, u3
     } else {
         format!("-{}", s.dither)
     };
+    // `bleed` is the only non-default gutter style; it gets its own cache
+    // entry so a bleed render never collides with the solid-mat variant.
+    // `solid` omits the segment (mirrors the dither rule), so every default
+    // variant keeps its exact pre-bleed filename and cached bytes.
+    let bl = match s.gutter_style.token() {
+        Some(t) => format!("-{t}"),
+        None => String::new(),
+    };
     paths.variants_dir(id).join(format!(
-        "v{PIPELINE_VERSION}-{pixel}-{placement}{g}-{W}x{H}-{Q}{D}.png",
+        "v{PIPELINE_VERSION}-{pixel}-{placement}{g}-{W}x{H}-{Q}{D}{BL}.png",
         pixel = s.pixel,
         placement = s.placement,
         W = out.0,
         H = out.1,
         Q = s.palette,
         D = d,
+        BL = bl,
     ))
 }
 
@@ -298,7 +308,11 @@ pub fn render_offline(
     let bytes = fs::read(&variant_path).map_err(|e| PixError::io(&variant_path, e))?;
     let canvas = decode_any(&bytes)?;
     let view = crate::placement::view(src, out, s.placement, s.gutter_px);
-    let img = crate::render::composite(&canvas, &view, s.bg_color);
+    let bleed = match s.gutter_style {
+        GutterStyle::Solid => None,
+        GutterStyle::Bleed => Some(bleed_layer(paths, id, s, out)?),
+    };
+    let img = crate::render::composite_with_bleed(&canvas, &view, s.bg_color, bleed.as_ref());
     let png = encode_final(&img, &canvas, s.palette, s.bg_color);
     Ok((img, png))
 }
@@ -447,6 +461,114 @@ pub fn original_path(paths: &Paths, id: &str) -> Result<std::path::PathBuf> {
     )))
 }
 
+/// Cache path for the blurred bleed background of a `bleed` gutter render.
+/// Keyed by only the tokens that change the bleed (pixel block size, output
+/// size, palette, dither) — NOT `gutter_px` (the bleed covers the whole output
+/// regardless of ring width) nor `placement`. Lives beside the variant PNG.
+pub fn bleed_path(paths: &Paths, id: &str, s: &ResolvedSettings, out: (u32, u32)) -> PathBuf {
+    let d = if s.dither == Dither::None {
+        String::new()
+    } else {
+        format!("-{}", s.dither)
+    };
+    paths.variants_dir(id).join(format!(
+        "bleed-v{PIPELINE_VERSION}-{pixel}-{W}x{H}-{Q}{D}.png",
+        pixel = s.pixel,
+        W = out.0,
+        H = out.1,
+        Q = s.palette,
+        D = d,
+    ))
+}
+
+/// The palette the bleed quantizes onto, derived from the *sharp variant
+/// canvas* so the ring shares the exact colors on screen. `off` has no
+/// palette (empty ⇒ RGBA bleed). For named modes this is the fixed table
+/// (identical to what `encode_final` publishes); `gen16` re-runs
+/// `median_cut(16)`+snap on the canvas, matching `fixed_palette`.
+fn bleed_palette(mode: PaletteMode, variant: &RgbaImage) -> Vec<Rgba<u8>> {
+    match mode {
+        PaletteMode::Off => Vec::new(),
+        PaletteMode::Auto => pipeline::median_cut(variant, 255),
+        PaletteMode::Gen16 => pipeline::median_cut(variant, 16)
+            .into_iter()
+            .map(crate::palette::snap_rgb555)
+            .collect(),
+        named => named
+            .fixed_table()
+            .map(|t| t.to_vec())
+            .unwrap_or_else(|| pipeline::median_cut(variant, 255)),
+    }
+}
+
+/// Materialize the blurred bleed background for a `bleed` gutter render:
+/// decode from cache if present, else build it from the stored original,
+/// quantize it onto the wallpaper palette and cache it as RGBA.
+pub fn bleed_layer(
+    paths: &Paths,
+    id: &str,
+    s: &ResolvedSettings,
+    out: (u32, u32),
+) -> Result<RgbaImage> {
+    let p = bleed_path(paths, id, s, out);
+    if p.exists() {
+        if let Ok(bytes) = fs::read(&p) {
+            if let Ok(img) = decode_any(&bytes) {
+                return Ok(img);
+            }
+        }
+    }
+    let orig = original_path(paths, id)?;
+    let bytes = fs::read(&orig).map_err(|e| PixError::io(&orig, e))?;
+    let oimg = decode_any(&bytes)?;
+    // The bleed's palette comes from the (cached) sharp variant canvas.
+    let pal = match s.palette {
+        PaletteMode::Off => Vec::new(),
+        mode => {
+            let (vp, _) = generate(paths, id, s, out)?;
+            let vb = fs::read(&vp).map_err(|e| PixError::io(&vp, e))?;
+            let canvas = decode_any(&vb)?;
+            bleed_palette(mode, &canvas)
+        }
+    };
+    let bleed = build_bleed(&oimg, s, out, &pal);
+    let enc = encode_variant(&bleed, PaletteMode::Off);
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent).map_err(|e| PixError::io(parent, e))?;
+    }
+    crate::config::write_atomic(&p, &enc).map_err(|e| PixError::io(&p, e))?;
+    Ok(bleed)
+}
+
+/// Build the bleed background canvas: cover-crop `orig` to the full output
+/// aspect, area-average downscale to the pixel grid (the pipeline's own box
+/// kernels), one extra box-blur pass over the grid, then quantize onto `pal`
+/// (empty ⇒ left as RGBA). Blur happens **before** quantize so the pixelated
+/// look survives; the result is nearest-stretched over the whole output by the
+/// compositor.
+fn build_bleed(
+    orig: &RgbaImage,
+    s: &ResolvedSettings,
+    out: (u32, u32),
+    pal: &[Rgba<u8>],
+) -> RgbaImage {
+    let cv = crate::placement::view((orig.width(), orig.height()), out, Placement::CoverCrop, 0);
+    let cover = pipeline::crop(orig, cv.window);
+    let block = s.pixel.block_px().max(1);
+    let gw = (out.0 / block).max(1);
+    let gh = (out.1 / block).max(1);
+    let mut g = pipeline::downscale(&cover, gw, gh);
+    // One extra 2×2 box-average pass (the pipeline's own kernel) softens the
+    // bleed past the crisp pixel grid — a soft on-palette halo, not sharp tiles.
+    if g.width() > 1 && g.height() > 1 {
+        g = pipeline::box_halve(&g);
+    }
+    if !pal.is_empty() {
+        g = pipeline::apply_palette(&g, pal);
+    }
+    g
+}
+
 /// Re-run add-time optimization over the whole library.
 pub fn optimize_all(paths: &Paths, cfg: &crate::config::Optimize) -> Vec<(String, String)> {
     let mut notes = Vec::new();
@@ -513,6 +635,124 @@ mod tests {
         assert_eq!(
             name,
             format!("v{PIPELINE_VERSION}-8-cover-gutter-g12-3840x2160-auto-fs.png")
+        );
+    }
+
+    // ---- blurred-bleed gutter ----
+
+    #[test]
+    fn bleed_variant_token_is_conditional_and_bleed_cache_ignores_ring() {
+        let mut solid = settings("16");
+        solid.placement = Placement::CoverGutter;
+        solid.gutter_px = 24;
+        let mut bleed = solid;
+        bleed.gutter_style = GutterStyle::Bleed;
+
+        let paths = Paths::with_root(std::path::Path::new("/tmp/x"));
+        let out = (1920, 1080);
+        let sname = variant_path(&paths, "id1", &solid, out)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let bname = variant_path(&paths, "id1", &bleed, out)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        // solid keeps the exact pre-bleed filename (byte-compatible defaults).
+        assert!(!sname.contains("bleed"), "solid leaked a token: {sname}");
+        assert_eq!(
+            sname,
+            format!("v{PIPELINE_VERSION}-16-cover-gutter-g24-1920x1080-auto.png")
+        );
+        // bleed appends `-bleed` immediately before `.png`.
+        assert_eq!(bname, sname.replace(".png", "-bleed.png"));
+
+        // The bleed sibling cache is keyed by pixel+out+palette+dither only:
+        // no ring/placement segment, and identical for solid vs bleed and for
+        // any gutter width (the bleed covers the whole output regardless).
+        let bkey = bleed_path(&paths, "id1", &bleed, out)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            bkey,
+            format!("bleed-v{PIPELINE_VERSION}-16-1920x1080-auto.png")
+        );
+        assert_eq!(
+            bleed_path(&paths, "id1", &solid, out),
+            bleed_path(&paths, "id1", &bleed, out)
+        );
+        let mut wide = bleed;
+        wide.gutter_px = 60;
+        assert_eq!(
+            bleed_path(&paths, "id1", &bleed, out),
+            bleed_path(&paths, "id1", &wide, out)
+        );
+    }
+
+    #[test]
+    fn render_offline_bleed_paints_ring_solid_paints_bg() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dir.path());
+        let id = "wall";
+        let out = (240u32, 150u32);
+        // Seed a colorful stored original (original_path only resolves once present).
+        let entry = paths.entry_dir(id);
+        std::fs::create_dir_all(&entry).unwrap();
+        testsrc::gradient64()
+            .save(entry.join("original.png"))
+            .unwrap();
+
+        let mut solid = settings("8");
+        solid.placement = Placement::CoverGutter;
+        solid.gutter_px = 12;
+        solid.bg_color = "#000000".parse().unwrap();
+        let (solid_img, _) = render_offline(&paths, id, (64, 64), &solid, out).unwrap();
+        assert!(
+            !bleed_path(&paths, id, &solid, out).exists(),
+            "a solid render must never build a bleed layer"
+        );
+
+        let mut bleed = solid;
+        bleed.gutter_style = GutterStyle::Bleed;
+        let (bleed_img, _) = render_offline(&paths, id, (64, 64), &bleed, out).unwrap();
+        assert!(
+            bleed_path(&paths, id, &bleed, out).exists(),
+            "a bleed render must cache the blur layer"
+        );
+
+        // Ring geometry comes from the same view the compositor uses.
+        let v = crate::placement::view((64, 64), out, Placement::CoverGutter, 12);
+        let d = v.dest;
+        let in_dest = |x: u32, y: u32| x >= d.x && x < d.x + d.w && y >= d.y && y < d.y + d.h;
+        let mut ring = 0;
+        let mut bled_color = false;
+        for (x, y, p) in bleed_img.enumerate_pixels() {
+            if in_dest(x, y) {
+                // the sharp variant is painted into dest identically for both
+                assert_eq!(p.0, solid_img.get_pixel(x, y).0, "dest diverged at {x},{y}");
+                continue;
+            }
+            ring += 1;
+            // solid gutter is the flat bg mat…
+            let sc = solid_img.get_pixel(x, y).0;
+            assert_eq!(
+                [sc[0], sc[1], sc[2]],
+                [0, 0, 0],
+                "solid ring {x},{y} not bg"
+            );
+            // …bleed gutter carries the wallpaper's own blurred colour.
+            if [p.0[0], p.0[1], p.0[2]] != [0, 0, 0] {
+                bled_color = true;
+            }
+        }
+        assert!(ring > 0, "cover-gutter must leave a ring");
+        assert!(
+            bled_color,
+            "bleed ring must carry wallpaper color, not flat bg"
         );
     }
 

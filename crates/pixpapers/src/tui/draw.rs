@@ -30,7 +30,7 @@ pub struct Geom {
 /// two keys and `r` is taken by refresh (deviation recorded in CLI.md and
 /// PLAN-30 §C.4).
 pub const HINTS: &str = "a add · s set · c cycle · p pixel · l place · b bg · \
-                        g gutter · t palette · d dither · D remove · r refresh · \
+                        g gutter · G style · t palette · d dither · D remove · r refresh · \
                         x export · q";
 
 /// One library row: `▸ id title pixel placement` — `▸` marks
@@ -65,6 +65,10 @@ pub fn caption_lines(r: &ResolvedSettings, canvas: (u32, u32), enabled: bool) ->
         format!("palette {} · dither {}", r.palette, r.dither),
         format!("bg {} · gutter {}px", r.bg_color, r.gutter_px),
     ];
+    // Gutter style is always meaningful (any wallpaper can be a
+    // cover-gutter); the row reads `gutter style solid` or
+    // `gutter style bleed` so the row never changes shape.
+    lines.push(format!("gutter style {}", r.gutter_style));
     if !enabled {
         lines.push("pixelation OFF — originals (placement kept)".into());
     }
@@ -299,9 +303,10 @@ mod tests {
         assert_eq!(lines[0], "116×28 · pixel 16 · fit");
         assert_eq!(lines[1], "palette auto · dither none");
         assert_eq!(lines[2], "bg #000000 · gutter 24px");
-        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[3], "gutter style solid");
+        assert_eq!(lines.len(), 4);
         // the R6-off note rides along when pixelation is disabled
-        assert_eq!(caption_lines(&r, (116, 28), false).len(), 4);
+        assert_eq!(caption_lines(&r, (116, 28), false).len(), 5);
     }
 
     #[test]

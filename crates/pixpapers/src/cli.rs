@@ -7,7 +7,9 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
-use pixcore::{Config, Dither, PaletteMode, Paths, Pixel, Placement, RgbCss, Settings};
+use pixcore::{
+    Config, Dither, GutterStyle, PaletteMode, Paths, Pixel, Placement, RgbCss, Settings,
+};
 
 use crate::ipc::{self, Request};
 #[cfg(feature = "tui")]
@@ -47,6 +49,8 @@ enum Cmd {
     Palette { id: String, palette: PaletteMode },
     /// Set the dither for one wallpaper: none|fs|atkinson|bayer2|bayer4|bayer8
     Dither { id: String, dither: Dither },
+    /// Set the cover-gutter ring style for one wallpaper: solid|bleed
+    GutterStyle { id: String, style: GutterStyle },
     /// Change defaults for new wallpapers / unset entries
     Default {
         #[command(subcommand)]
@@ -89,6 +93,9 @@ enum Cmd {
         /// Dither for this render only (not persisted)
         #[arg(long)]
         dither: Option<Dither>,
+        /// Gutter ring style for this render only (not persisted)
+        #[arg(long)]
+        gutter_style: Option<GutterStyle>,
         #[arg(short, long)]
         out: Option<PathBuf>,
     },
@@ -118,6 +125,7 @@ enum DefaultWhat {
     Placement { placement: Placement },
     Palette { palette: PaletteMode },
     Dither { dither: Dither },
+    GutterStyle { style: GutterStyle },
 }
 
 pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
@@ -177,6 +185,13 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
                 apply_now(paths);
             }
         }
+        Cmd::GutterStyle { id, style } => {
+            let (e, cur) = commands::edit_entry(paths, &id, |s| s.gutter_style = Some(style))?;
+            println!("{} → gutter-style {style}{}", e.id, changed_note(cur));
+            if cur {
+                apply_now(paths);
+            }
+        }
         Cmd::Default { what } => {
             let mut cfg = cfg.clone();
             match what {
@@ -191,6 +206,9 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
                 }
                 DefaultWhat::Dither { dither } => {
                     commands::set_default_dither(paths, &mut cfg, dither)?
+                }
+                DefaultWhat::GutterStyle { style } => {
+                    commands::set_default_gutter_style(paths, &mut cfg, style)?
                 }
             }
             apply_now(paths);
@@ -227,6 +245,7 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
             gutter,
             palette,
             dither,
+            gutter_style,
             out,
         } => {
             let (w, h) = parse_size(&size)?;
@@ -237,6 +256,7 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
                 gutter_px: gutter,
                 palette,
                 dither,
+                gutter_style,
             };
             commands::export(paths, cfg, &id, &overrides, (w, h), out.as_deref())?;
         }

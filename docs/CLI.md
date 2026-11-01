@@ -36,6 +36,7 @@ pixpapers -V | -h
 | `placement <ID> <PL>` | `fit cover-gutter cover-crop stretch` | See below. |
 | `bg <ID> <COLOR>` | `#rrggbb` | Letterbox / gutter color. |
 | `gutter <ID> <PX>` | `0..=4096` | Mat width for `cover-gutter` (px in output space). |
+| `gutter-style <ID> <ST>` | `solid bleed` | How the `cover-gutter` ring is filled. `solid` = the flat `bg` colour (default); `bleed` = the wallpaper's own edges blurred and snapped to the picture's palette, so the ring stays pixelated. The centre is byte-identical either way. Aliases: `mat`/`flat`→`solid`, `blur`/`blurred`→`bleed`. |
 | `palette <ID> <M>` | `off auto nes gb cga ega vga gen16` | Quantization look. `off` = plain RGBA; `auto` = per-image median-cut ≤ 256; `nes` = the 64-entry 2C02 master table (the canonical 192-byte `.pal`); `gb` = DMG four greens; `cga`/`ega`/`vga` = fixed tables; `gen16` = per-image 16, snapped onto the RGB555 grid. Vibe, not PPU emulation. On `normal` the look is applied to the **full-size canvas** (one-time, then cached like any variant); `auto` + `none` is the v0.1-identical default (plain crop, palette-encoded at encode). |
 | `dither <ID> <D>` | `none fs atkinson bayer2 bayer4 bayer8` | Applied after palette mapping, in canvas space (deterministic, integer math). `none` = pure nearest (the v0.1 look); `fs` = Floyd–Steinberg; `atkinson` = Atkinson; `bayer2/4/8` = ordered screens. On `normal` the dither runs over the full-size canvas (one-time, then cached); with palette `off` it is inert (no palette to diffuse into). |
 
@@ -47,6 +48,7 @@ pixpapers -V | -h
 | `default placement <PL>` | Same for placement. |
 | `default palette <M>` | Same for the palette look. |
 | `default dither <D>` | Same for the dither. |
+| `default gutter-style <ST>` | Same for how the `cover-gutter` ring is filled (`solid`/`bleed`). |
 
 Changing a default re-applies to any *unset* current wallpaper immediately.
 
@@ -56,7 +58,7 @@ Changing a default re-applies to any *unset* current wallpaper immediately.
 |---|---|
 | `status [--json] [--bench]` | Daemon truth when running (pid, outputs with live render label, enabled policy); filesystem view otherwise. The label is `{pixel}/{placement}-{palette}[-{dither}]` — e.g. `16/fit-auto`, `16/fit-vga-fs` — the same tokens as the variant cache key (the dither segment is omitted when `none`). `--bench` adds self-timed switch/render latencies, variant-cache hit rate, RSS + fd count. |
 | `bar` | One line for a bar — the [waybar module's](contrib/waybar/README.md) text source. Character-exact: `▞ <title> · <pixel>/<placement-short>` while a current entry exists (even with the daemon dead — config+manifest truth through the daemon's own resolution chain, so the label never shows a look the daemon would not render), `▞ pixpapers — set one` with no entry and the daemon alive, `▞ pixpapers · daemon down` with the socket dead. Always exactly one line, always exit 0 (waybar's custom module auto-hides on empty output or a non-zero exit, so the module can never blink). Never writes, never spawns; works offline. |
-| `export <ID> <WxH> [--pixel P] [--placement PL] [--bg C] [--gutter N] [--palette M] [--dither D] [-o OUT]` | Offline render to PNG using the daemon's exact composite path — a preview that cannot lie. No daemon needed. `--palette`/`--dither` override this render only (never persisted). Named modes write a palette PNG (PLTE = the table deduped by first occurrence, a transparent placeholder at index 0, and the bg colour merged in when absent); `off`/`auto` stay plain RGBA. |
+| `export <ID> <WxH> [--pixel P] [--placement PL] [--bg C] [--gutter N] [--gutter-style ST] [--palette M] [--dither D] [-o OUT]` | Offline render to PNG using the daemon's exact composite path — a preview that cannot lie. No daemon needed. `--palette`/`--dither`/`--gutter-style` override this render only (never persisted). Named modes write a palette PNG (PLTE = the table deduped by first occurrence, a transparent placeholder at index 0, and the bg colour merged in when absent); `off`/`auto` stay plain RGBA. |
 | `optimize [--all]` | Re-run the storage optimizer (PNG re-encode / strip cruft) over the library; `--all` includes entries unchanged since import. |
 | `completions <bash|zsh|fish>` | Shell completion script to stdout. |
 
@@ -84,6 +86,7 @@ nothing is printed to the terminal (errors included).
 | `d` | Cycle dither `none→fs→atkinson→bayer2→bayer4→bayer8` | `<id> → dither <v>` |
 | `b` | Prompt bg colour — input line, `#rgb` or `#rrggbb` | `<id> → bg <#rrggbb>` (`#abc` stores `#aabbcc`) |
 | `g` | Prompt gutter px — input line | `<id> → gutter <n>px` |
+| `G` | Cycle gutter style `solid→bleed` — the `cover-gutter` ring fill | `<id> → gutter-style <v>` (plus ` (not current — will apply on set)` when the edited entry is not current) |
 | `D` | Remove the selected entry — confirm line in the status row: `remove <id>? y/N`; `y`/`Y` confirms, anything else cancels | `removed <id> (<title>)` — `Apply` only when the removed entry was current. Single key on purpose: `rm` would collide with `r` (refresh) |
 | `e` | Toggle pixelation on/off (config) + Apply | `pixelation enabled` / `pixelation disabled — originals only (still stretched/placed)` |
 | `x` | Export the selected entry at the preview canvas to the download dir (`$XDG_DOWNLOAD_DIR` → `~/Downloads` → `.`) | the CLI's `wrote <dest> · <W>×<H> · <pixel> <placement> · <KB> KB` (not a mutation: no reload, no Apply) |
@@ -103,7 +106,7 @@ errors — nothing is stored, nothing is applied.
 Preview: generated only when the terminal speaks an image protocol
 (table below); re-rendered on selection change, `r` refresh, or resize —
 never on a timer. The caption block (output size · pixel · placement /
-palette · dither / bg · gutter) is always visible, image or not. An
+palette · dither / bg · gutter / gutter style) is always visible, image or not. An
 encoded preview over **256 KB** is refused with the reason (keeps a
 25-column SSH terminal from exploding). Without an image protocol the
 pane shows one honest line instead: `image preview unsupported here —

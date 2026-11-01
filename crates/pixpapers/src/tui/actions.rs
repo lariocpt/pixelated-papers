@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 
 use crossterm::event::KeyCode;
-use pixcore::{Dither, PaletteMode, Pixel, Placement, RgbCss, Settings};
+use pixcore::{Dither, GutterStyle, PaletteMode, Pixel, Placement, RgbCss, Settings};
 
 use super::App;
 use crate::commands;
@@ -345,6 +345,15 @@ pub(crate) fn handle(app: &mut App, code: KeyCode, ctrl: bool) -> KeyOutcome {
                 let v = next_in(&Dither::ALL, r.dither);
                 s.dither = Some(v);
                 format!("dither {v}")
+            });
+            KeyOutcome::Handled
+        }
+        // `G` cycles the cover-gutter ring fill: solid mat → blurred bleed.
+        KeyCode::Char('G') => {
+            cycle_knob(app, |r, s| {
+                let v = next_in(&GutterStyle::ALL, r.gutter_style);
+                s.gutter_style = Some(v);
+                format!("gutter-style {v}")
             });
             KeyOutcome::Handled
         }
@@ -1238,6 +1247,36 @@ mod tests {
         assert_eq!(
             applies(&harness),
             4,
+            "every step on the current entry Applies"
+        );
+    }
+
+    #[test]
+    fn gutter_style_cycle_on_current_applies() {
+        if crate::harness::skip_without_cli_binary() {
+            return;
+        }
+        let (home, id0, _) = two_entry_home();
+        crate::commands::set_current(&home.paths, &id0).unwrap();
+        let harness = DaemonHarness::start(&home.paths);
+        let mut app = app_for(&home);
+        // gutter-style cycle: solid (default) → bleed → solid (wraps)
+        for want in ["bleed", "solid"] {
+            assert!(matches!(
+                key(&mut app, KeyCode::Char('G')),
+                KeyOutcome::Handled
+            ));
+            assert_manifest_knob(&home, "gutter_style", want);
+        }
+        assert_eq!(
+            app.last,
+            format!("{id0} → gutter-style solid"),
+            "{}",
+            app.last
+        );
+        assert_eq!(
+            applies(&harness),
+            2,
             "every step on the current entry Applies"
         );
     }

@@ -338,6 +338,122 @@ footer a { color: var(--fg-muted); }
 
 </div>
 
+  <!-- BEGIN blurred-bleed interactive -->
+  <section id="gutter">
+    <style>
+      #gutter .wipe { position: relative; overflow: hidden; border-radius: 12px; border: 1px solid var(--line); margin-top: 22px; }
+      #gutter .wipe img { display: block; width: 100%; height: auto; }
+      #gutter .wipe .ov { position: absolute; inset: 0; height: 100%; clip-path: inset(0 50% 0 0); }
+      #gutter .wipe .div { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; background: var(--amber); box-shadow: 0 0 0 1px rgba(0,0,0,.4); pointer-events: none; }
+      #gutter .wipe .tag { position: absolute; bottom: 10px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #0f1114; background: var(--amber); border-radius: 5px; padding: 2px 8px; }
+      #gutter .wipe .tag.s { left: 10px; } #gutter .wipe .tag.b { right: 10px; background: var(--mint); }
+      #gutter input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 26px; background: transparent; cursor: ew-resize; margin: 14px 0 4px; }
+      #gutter input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 26px; background: var(--amber); border: 2px solid #0f1114; border-radius: 5px; }
+      #gutter input[type=range]::-moz-range-thumb { width: 18px; height: 26px; background: var(--amber); border: 2px solid #0f1114; border-radius: 5px; }
+      #gutter input[type=range]:focus-visible { outline: 2px solid var(--mint); outline-offset: 4px; border-radius: 5px; }
+      #gutter .probes { display: flex; gap: 8px; flex-wrap: wrap; margin: 24px 0 14px; }
+      #gutter .probes button { font: inherit; font-size: 13px; color: var(--muted); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 7px 13px; cursor: pointer; }
+      #gutter .probes button[aria-pressed="true"] { color: var(--amber); border-color: var(--amber); background: rgba(247,179,43,.08); }
+      #gutter .probes button:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+      #gutter .zooms { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+      #gutter .zooms figure { margin: 0; }
+      #gutter .zooms canvas, #gutter .zooms img { width: 100%; image-rendering: pixelated; border: 1px solid var(--line); border-radius: 8px; display: block; }
+      #gutter figcaption { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-top: 7px; }
+      #gutter table { width: 100%; border-collapse: collapse; margin: 6px 0 4px; font-size: 14px; }
+      #gutter td { padding: 8px 10px; border-bottom: 1px solid var(--line); }
+      #gutter td:first-child { color: var(--muted); width: 38%; }
+      #gutter .sw { display: inline-block; width: 13px; height: 13px; border: 1px solid #000; border-radius: 3px; vertical-align: -2px; margin-right: 6px; }
+      #gutter .verdict { font-weight: 700; font-size: 12px; padding: 2px 9px; border-radius: 20px; }
+      #gutter .verdict.d { color: #ff7b7b; background: rgba(201,79,79,.14); }
+      #gutter .verdict.s { color: #5fe0a8; background: rgba(57,192,143,.14); }
+      #gutter .meter { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; margin-top: 3px; }
+      #gutter .meter i { display: block; height: 100%; background: var(--amber); }
+      @media (prefers-reduced-motion: no-preference) { #gutter .wipe { transition: filter .2s; } }
+      @media (max-width: 560px) { #gutter .zooms { grid-template-columns: 1fr; } }
+    </style>
+    <div class="wrap">
+      <div class="eyebrow">GUTTER STYLE &middot; INTERACTIVE</div>
+      <h2>Drag the divider &mdash; watch the wallpaper bleed</h2>
+      <p class="lede">One 1920&times;1080 render, same wallpaper, same <code>cover-gutter</code>, same 72&#8202;px gutter, same 16&#8202;px pixels and NES palette. Only <code>gutter-style</code> changes. Drag the slider (or focus it and use the arrow keys): left of the line is <code>solid</code>, right of it is <code>bleed</code>.</p>
+      <div class="wipe">
+        <img src="img/gutter-bleed.png" width="1920" height="1080" alt="Cover-gutter wallpaper with the gutter blurred from the wallpaper's own pixels (gutter-style bleed)">
+        <img class="ov" id="wipeClip" src="img/gutter-solid.png" width="1920" height="1080" alt="" style="clip-path: inset(0 50% 0 0)">
+        <div class="div" id="wipeDivider"></div>
+        <span class="tag s">solid</span><span class="tag b">bleed</span>
+      </div>
+      <input type="range" id="wipeRange" min="0" max="100" value="50" aria-label="Reveal solid gutter (left) against blurred-bleed gutter (right)">
+      <p class="lede" style="font-size: 14px">The flat charcoal ring turns into a soft, out-of-focus echo of the picture &mdash; blurred, then snapped to the same NES palette, so it stays pixelated rather than photographic.</p>
+
+      <h3 style="margin-top: 30px">The gutter, pixel by pixel</h3>
+      <p class="lede">Pick a spot; the two frames are that region zoomed 5&times;. The numbers are read from the actual pixels in your browser &mdash; a gutter pixel under <code>solid</code> is one flat mat colour, under <code>bleed</code> it is a blurred-wallpaper colour, so they differ. A centre pixel is untouched by either, so it is identical.</p>
+      <div class="probes" role="group" aria-label="Choose which part of the render to inspect">
+        <button type="button" data-probe="gutter" aria-pressed="true">Gutter</button>
+        <button type="button" data-probe="edge" aria-pressed="false">Gutter edge</button>
+        <button type="button" data-probe="center" aria-pressed="false">Centre</button>
+      </div>
+      <div class="zooms">
+        <figure><canvas id="zoomS" width="64" height="64" role="img" aria-label="Solid gutter crop, magnified"></canvas><figcaption>solid mat</figcaption></figure>
+        <figure><canvas id="zoomB" width="64" height="64" role="img" aria-label="Blurred bleed gutter crop, magnified"></canvas><figcaption>bleed</figcaption></figure>
+      </div>
+      <table id="gstats" aria-live="polite">
+        <tbody>
+          <tr><td>Probe</td><td id="stProbe">Gutter &mdash; left gutter band</td></tr>
+          <tr><td>Differs in crop</td><td><span id="stDiff">4096</span> / 4096 pixels<div class="meter"><i id="stMeter" style="width:100%"></i></div></td></tr>
+          <tr><td>A gutter pixel</td><td id="stGutter"><span class="sw" style="background:#0f1114"></span><code>#0f1114</code> &rarr; <span class="sw" style="background:#787878"></span><code>#787878</code> <span class="verdict d">&#8800; differs</span></td></tr>
+          <tr><td>A centre pixel</td><td id="stCenter">&mdash;</td></tr>
+        </tbody>
+      </table>
+      <p class="note">Across the whole render, <strong>411,264 of 2,073,600</strong> pixels differ (19.83%) &mdash; exactly the 411,264-pixel gutter ring, with nothing in the centre changing. The demo images are the real output of <code>pixpapers export</code>; the magnified crops are those same files, inlined, so this works with no server and no network.</p>
+    </div>
+    <script>
+      (function () {
+        var doc = document, CROPS = {"gutter": {"solid": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAABnRSTlMAAAAAAABupgeRAAAAgElEQVR4nNXOQQ0AIBDAsDEDhAT/WhFxD7Iq6NrnUiZxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEufvwNQDDh0AtCY0OZsAAAAASUVORK5CYII=", "bleed": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAABnRSTlMAAAAAAABupgeRAAAAfElEQVR4nNXOQREAIADDsFLVk48IHlyjIGcbZRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncf4OvLocIAHoKkN+igAAAABJRU5ErkJggg=="}, "edge": {"solid": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAABnRSTlMAAAAAAABupgeRAAAAsElEQVR4nOXRsQkCUQAE0XH4uQiGFmIRlmAoiJ1YgqVYgiUYGFqINRwi3nAvnmBhV+vNll+6nE+T+uf9OqkfzMz+Pa2XOImTOImTOImTOImTOImTOImTOImTuMHMPHYLe0DiJE7iJE7iJE7iJE7iJE7iJE7iJG4wM8fDwh6QOImTOImTOImTOImTOImTOImTOIkbzMzrtrAHJE7iJE7iJE7iJE7iJE7iJE7i/PeAb30AJCYIJCjlUmEAAAAASUVORK5CYII=", "bleed": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAABnRSTlMAAAAAAABupgeRAAAAp0lEQVR4nOXRMQ0CQQAF0WGyMhCCCCQgZCUgASlIQAIF5QlBw4WCndyrf/GTOc05Wcn7ed+1Hyzmsu3bS5zESZzESZzESZzESZzESZzESZzESdxgMa/zwQpInMRJnMRJnMRJnMRJnMRJnMRJnMQNFnO7HqyAxEmcxEmcxEmcxEmcxEmcxEmcxEncYDGfx8EKSJzESZzESZzESZzESZzESZzE+e8Dv/oCl6YIJKNfsEEAAAAASUVORK5CYII="}, "center": {"solid": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAABnRSTlMAAAAAAABupgeRAAAA+klEQVR4nN3YoU1EURBG4bMnrwBKQCCeRCAogRIoYAUlrKAASkBQwAoKoIgVSAQCQQFbAGIbeE/csAk5fHZu/kwy4k5ms+eSJe+7e0Z8vD0NvZ/vdmfJlziJkziJkziJkziJm/bXX4uFeTDo9nvs/XEwf175+PITkDiJkziJkziJkziJkziJkziJkziJ27w+LhcOP2OHp1E309gh7LDST34CEidxEidxEidxEidxEidxEidxEjd9Pq9UtmNBFy+D6/F2d5b8/AQkTuIkTuIkTuIkTuIkTuIkTuIkTuKm48pePnz+HtzvR109/NMJSJzESZzESZx/3cBvnQDOzh3pjHNNywAAAABJRU5ErkJggg==", "bleed": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAABnRSTlMAAAAAAABupgeRAAAA+klEQVR4nN3YoU1EURBG4bMnrwBKQCCeRCAogRIoYAUlrKAASkBQwAoKoIgVSAQCQQFbAGIbeE/csAk5fHZu/kwy4k5ms+eSJe+7e0Z8vD0NvZ/vdmfJlziJkziJkziJkziJm/bXX4uFeTDo9nvs/XEwf175+PITkDiJkziJkziJkziJkziJkziJkziJ27w+LhcOP2OHp1E309gh7LDST34CEidxEidxEidxEidxEidxEidxEjd9Pq9UtmNBFy+D6/F2d5b8/AQkTuIkTuIkTuIkTuIkTuIkTuIkTuKm48pePnz+HtzvR109/NMJSJzESZzESZx/3cBvnQDOzh3pjHNNywAAAABJRU5ErkJggg=="}};
+        var LABEL = {"gutter": "left gutter band", "edge": "straddles the gutter edge", "center": "center (untouched)"};
+        var range = doc.getElementById('wipeRange'), clip = doc.getElementById('wipeClip'), divider = doc.getElementById('wipeDivider');
+        function setClip(v) { clip.style.clipPath = 'inset(0 ' + (100 - v) + '% 0 0)'; divider.style.left = v + '%'; }
+        range.addEventListener('input', function () { setClip(+range.value); });
+        setClip(+range.value);
+
+        function hex(a, i) { return '#' + a[i].toString(16).padStart(2, '0') + a[i + 1].toString(16).padStart(2, '0') + a[i + 2].toString(16).padStart(2, '0'); }
+        var cvS = doc.getElementById('zoomS'), cvB = doc.getElementById('zoomB');
+        cvS.style.width = cvB.style.width = ''; // CSS drives width; backing store is 64px
+        function toData(src, cb) { var im = new Image(); im.onload = function () { var c = doc.createElement('canvas'); c.width = 64; c.height = 64; var x = c.getContext('2d'); x.drawImage(im, 0, 0, 64, 64); try { cb(x.getImageData(0, 0, 64, 64).data, null); } catch (e) { cb(null, e); } }; im.src = src; }
+        var cache = {}, loaded = 0, total = 0, tainted = false;
+        Object.keys(CROPS).forEach(function (k) {
+          ['solid', 'bleed'].forEach(function (side) { total++; toData(CROPS[k][side], function (d, e) { if (e) tainted = true; cache[k + ':' + side] = d; if (++loaded === total) ready(); }); });
+        });
+        function cell(cls, label) { return '<span class="verdict ' + cls + '">' + label + '</span>'; }
+        function swatch(h) { return '<span class="sw" style="background:' + h + '"></span><code>' + h + '</code>'; }
+        function isGutter(gx, gy) { return gx < 72 || gx >= 1848 || gy < 72 || gy >= 1008; }
+        function render(name) {
+          var x0 = {"gutter": 4, "edge": 40, "center": 928}[name], y0 = {"gutter": 512, "edge": 484, "center": 508}[name];
+          var sd = cache[name + ':solid'], bd = cache[name + ':bleed'];
+          draw(cvS, sd, CROPS[name].solid); draw(cvB, bd, CROPS[name].bleed);
+          doc.getElementById('stProbe').textContent = (name === 'gutter' ? 'Gutter' : name === 'edge' ? 'Gutter edge' : 'Centre') + ' — ' + LABEL[name];
+          if (!sd || !bd) { doc.getElementById('stGutter').innerHTML = '<span class="verdict d">browser blocked pixel-reading</span>'; return; }
+          var diff = 0, gs = null, bs = null, cs = null, ce = null;
+          for (var yy = 0; yy < 64; yy++) for (var xx = 0; xx < 64; xx++) {
+            var i = (yy * 64 + xx) * 4, d = sd[i] !== bd[i] || sd[i + 1] !== bd[i + 1] || sd[i + 2] !== bd[i + 2];
+            if (d) diff++;
+            if (yy === 28) { var g = isGutter(x0 + xx, y0 + yy); if (g && gs === null) { gs = hex(sd, i); bs = hex(bd, i); } if (!g && cs === null) { cs = hex(sd, i); ce = hex(bd, i); } }
+          }
+          doc.getElementById('stDiff').textContent = diff;
+          doc.getElementById('stMeter').style.width = (diff / 4096 * 100) + '%';
+          doc.getElementById('stGutter').innerHTML = gs === null ? '&mdash; no gutter pixels here' : swatch(gs) + ' &rarr; ' + swatch(bs) + ' ' + (gs === bs ? cell('s', '= same') : cell('d', '≠ differs'));
+          doc.getElementById('stCenter').innerHTML = cs === null ? '&mdash; no centre pixels here' : swatch(cs) + ' &rarr; ' + swatch(ce) + ' ' + (cs === ce ? cell('s', '= same') : cell('d', '≠ differs'));
+        }
+        function draw(cv, data, fallbackSrc) {
+          var x = cv.getContext('2d');
+          if (data) { x.putImageData(new ImageData(new Uint8ClampedArray(data), 64, 64), 0, 0); }
+          else { var im = new Image(); im.onload = function () { x.drawImage(im, 0, 0, 64, 64); }; im.src = fallbackSrc; }
+        }
+        var btns = Array.prototype.slice.call(doc.querySelectorAll('#gutter .probes button'));
+        btns.forEach(function (b) { b.addEventListener('click', function () { btns.forEach(function (o) { o.setAttribute('aria-pressed', String(o === b)); }); render(b.dataset.probe); }); });
+        function ready() { render('gutter'); }
+      })();
+    </script>
+  </section>
+  <!-- END blurred-bleed interactive -->
 <footer>
   <div class="wrap">
     <p style="margin:0">

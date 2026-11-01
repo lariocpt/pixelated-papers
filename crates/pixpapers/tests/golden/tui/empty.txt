@@ -27,4 +27,4 @@
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
 daemon:down · img:none · ready
-a add · s set · c cycle · p pixel · l place · b bg · g gutter · t palette · d dither · D remove · r
+a add · s set · c cycle · p pixel · l place · b bg · g gutter · G style · t palette · d dither · D r

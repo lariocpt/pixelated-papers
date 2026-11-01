@@ -1,11 +1,11 @@
 ┌ library ─────────────────────────────┐┌ preview ─────────────────────────────────────────────────┐
-│  d5113bb7 nebula               16 fit││116×22 · pixel 16 · fit                                   │
+│  d5113bb7 nebula               16 fit││116×21 · pixel 16 · fit                                   │
 │▸ dc731e25 dunes                16 fit││palette auto · dither none                                │  «sel»
 │                                      ││bg #000000 · gutter 24px                                  │
+│                                      ││gutter style solid                                        │
 │                                      ││                                                          │
 │                                      ││image preview unsupported here — pixpapers export dc731e25│
-│                                      ││116x22 -o /tmp/prev.png                                   │
-│                                      ││                                                          │
+│                                      ││116x21 -o /tmp/prev.png                                   │
 │                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
@@ -27,4 +27,4 @@
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
 remove dc731e25? y/N
-a add · s set · c cycle · p pixel · l place · b bg · g gutter · t palette · d dither · D remove · r
+a add · s set · c cycle · p pixel · l place · b bg · g gutter · G style · t palette · d dither · D r

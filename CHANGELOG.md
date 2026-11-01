@@ -4,6 +4,34 @@ All notable changes. Format follows Keep a Changelog; this project follows
 Semantic Versioning. The build log behind each area lives in
 [docs/plan/](docs/plan/).
 
+## [Unreleased]
+
+### Added
+- **`gutter-style`** on a `cover-gutter` wallpaper: how the ring around the
+  picture is filled. `solid` (default) is the flat `bg_color` mat; `bleed`
+  fills the ring with the wallpaper's own edges, blurred (a box-downscale)
+  **before** quantization and snapped to the *same* palette as the centre, so
+  the ring stays blocky and pixelated instead of a photographic gaussian blur.
+  The centre is unchanged and byte-identical to `solid` — only the ring
+  differs. Set it per wallpaper with `pixpapers gutter-style <ID>
+  <solid|bleed>`, globally with `pixpapers default gutter-style
+  <solid|bleed>`, or one-off with `pixpapers export … --gutter-style
+  <solid|bleed>` (render-only, not stored). In the TUI, `G` cycles it on the
+  selected wallpaper. TOML: `gutter_style = "bleed"` (and
+  `default_gutter_style`); manifests store `gutter_style` for the cache key.
+- **Bleed layer cache**: the blurred bleed is wallpaper geometry, not ring
+  width or gutter style, so it is cached once as a sibling
+  `bleed-v2-<pixel>-<W>x<H>-<Q>[-<dither>].png` and reused across ring widths
+  and across `solid`→`bleed` toggles; the variant cache gained a `-bleed`
+  token only for the bleed style, so `solid` cache bytes and filenames stay
+  byte-identical to before. Measured on the render path: bleed adds ≈4 ms to a
+  1080p export and is noise at 4K (≈0–3 ms on a ≈387 ms render) — the bleed
+  layer is built at `output/pixel` resolution, not full output; see
+  [docs/VERIFICATION.md](docs/VERIFICATION.md).
+- An interactive **before/after** comparison of the two gutter styles in the
+  website (`docs/index.html`), with the gutter magnified and the ring-vs-centre
+  pixel difference computed live in the browser from the demo images.
+
 ## [0.1.0] - 2026-10-24
 
 First release. Forced-pixelation wallpapers (presets `8/16/32/64/128/

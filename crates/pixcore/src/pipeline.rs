@@ -60,7 +60,7 @@ pub fn downscale(src: &RgbaImage, tw: u32, th: u32) -> RgbaImage {
     box_to(&cur, tw, th)
 }
 
-fn box_halve(src: &RgbaImage) -> RgbaImage {
+pub(crate) fn box_halve(src: &RgbaImage) -> RgbaImage {
     let (w, h) = (src.width(), src.height());
     let (nw, nh) = (w / 2, h / 2);
     let mut out = ImageBuffer::new(nw, nh);

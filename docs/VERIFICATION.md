@@ -649,3 +649,83 @@ at 0.2.0; pixpapers 0.2.1 declares `pixcore = "^0.2.0"`.
   the `2e2dd0c` self-test signature holds on the real 0.2.1 crate.
 - Pages rebuilt: live site serves the PNG `data:` favicon and the
   v0.2.1 strings (release link + footer).
+
+## gutter-style: blurred-bleed gutter (2026-11-01, this change)
+
+`cover-gutter` grew a `gutter-style` knob: `solid` (default) keeps the flat
+`bg_color` mat; `bleed` fills the ring with the wallpaper's own edges,
+blurred (box-downscale) **before** quantization and snapped to the *same*
+palette as the centre, so the ring stays pixelated rather than turning into a
+photographic blur. This is the one item AGENTS.md listed under "Deferred by
+decision" — built here on explicit request, not proactively.
+
+Design contract, all verified by test:
+
+- **Backward-compatible.** `GutterStyle` is an optional serde field with
+  `#[default] Solid` on `Settings` and a plain default on `Config`; existing
+  TOML and JSON manifests load byte-identically. No `PIPELINE_VERSION` /
+  `MANIFEST_VERSION` bump (adding an optional defaulted field is not a format
+  change). The solid cache filename and bytes are unchanged — `Solid` omits
+  its cache token exactly the way `none` omits the dither token; `variant_path`
+  appends `-bleed` only for `Bleed`.
+- **Blur before quantize, same palette.** `build_bleed` crops+downscales the
+  *original* to the `output/pixel` grid, runs one guarded `box_halve` pass
+  (pure code reusing the pipeline's box-downscale, no new deps), then
+  re-applies the wallpaper's own palette. The bleed is quantized to the same
+  table as the centre.
+- **The centre never changes.** `composite`/`composite_into` are thin wrappers
+  over `composite_*_with_bleed`; the bleed path nearest-stretches the bleed
+  layer over the full output *before* the variant is stamped, so the centre
+  pixels are bit-for-bit the solid render. `bleed_composite_agrees_daemon_and_png`
+  proves the daemon path and the offline PNG agree.
+- **Ring fills differ; centre does not.** `bleed_fills_the_ring_solid_fills_bg`
+  and `render_offline_bleed_paints_ring_solid_paints_bg` assert a ring pixel
+  changes under `bleed` while a centre pixel does not, and that `solid` paints
+  the ring with `bg_color`.
+- **Bleed layer cache.** The blur is wallpaper geometry, not ring width or
+  gutter style, so it is cached once as a sibling
+  `bleed-v2-<pixel>-<W>x<H>-<Q>[-<dither>].png` (no gutter/placement/style
+  token) and reused across ring widths and `solid`↔`bleed` toggles.
+  `bleed_variant_token_is_conditional_and_bleed_cache_ignores_ring` covers the
+  naming, the `-bleed` conditional token, and ring-width independence.
+
+### Blur cost (release binary, hermetic `PIXPAPERS_HOME`, offline)
+
+`export` renders with the non-persisting `Offline` policy, so it builds the
+bleed layer on every run — the solid→bleed delta is therefore the per-render
+worst case. Median of 5, everything equal but `--gutter-style`:
+
+| output | source | solid | bleed | Δ = build_bleed + composite |
+|---|---|---|---|---|
+| 1920×1080 | 1600×900 | ≈ 104 ms | ≈ 108 ms | **+≈4 ms** |
+| 3840×2160 | 3840×2160 | ≈ 387 ms | ≈ 387–390 ms | **≈ 0–3 ms** (noise) |
+
+The bleed layer is built at `output/pixel` resolution (120×68 at 1080p,
+240×135 at 4K), not full output — a crop+downscale to that grid plus one halve
+pass plus a palette re-snap — so its cost is small and does not grow with the
+ring width. The live daemon path caches the layer (see the naming test above),
+so steady-state re-renders amortize it away.
+
+### Demo + gates at this tree
+
+- Two real 1920×1080 renders generated with the release binary from
+  `docs/img/source.png` (`c8a5a7e1`, `cover-gutter · gutter 72 · pixel 16 ·
+  nes · fs · bg #0f1114`), differing only in `--gutter-style`:
+  `docs/img/gutter-solid.png` vs `docs/img/gutter-bleed.png`. Whole-image
+  pixel diff = **411,264 / 2,073,600 (19.83 %)**, exactly the 72-px gutter ring
+  (`1920×1080 − 1776×936`); **0 centre pixels differ**. A gutter pixel is
+  `#0f1114` under `solid` and a blurred-wallpaper colour (e.g. `#787878`) under
+  `bleed`. The interactive section in `docs/index.html` recomputes a magnified
+  gutter/edge/centre region live in the browser from these same files inlined as
+  `data:` URIs (no server, no network, no external requests — verified: the only
+  non-`data:`/`img/` links on the page are the existing relative `.md` doc links;
+  no `fetch`/XHR).
+- Workspace gates: 92 pixcore + 63 pixpapers tests green ·
+  `cargo build`/`build --release` clean · `clippy --workspace --all-targets --
+  -D warnings` clean · `cargo fmt --check` clean ·
+  `env -u WAYLAND_DISPLAY test/smoke.sh` ok · `test/verify-tui.sh
+  target/release/pixpapers` ok (the `B`-knob set-equality golden stays at its 6
+  keys — the TUI driver never presses `G`, so `gutter_style` never leaks into the
+  settings snapshot) · `test/verify-x11.sh` ok (root pixmap byte-identical to the
+  oracle under the `solid` default). TUI goldens regenerated (10 frames; caption
+  gained the `gutter style solid` row, HINTS gained `G style`).

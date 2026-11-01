@@ -23,6 +23,9 @@ pub struct Config {
     pub default_bg_color: RgbCss,
     /// Only used by `cover-gutter`.
     pub default_gutter_px: u32,
+    /// How the `cover-gutter` ring is filled (`solid` mat, or a blurred
+    /// `bleed` of the wallpaper's own edges). Only used by `cover-gutter`.
+    pub default_gutter_style: crate::gutter::GutterStyle,
     /// Reserved visibility floor (0 = off; presets are exact by design).
     pub min_visible_px: u32,
     /// Default palette quantization look (R2). `auto` is the v0.1 look
@@ -77,6 +80,7 @@ impl Default for Config {
             default_placement: Placement::Fit,
             default_bg_color: RgbCss::BLACK,
             default_gutter_px: 24,
+            default_gutter_style: crate::gutter::GutterStyle::Solid,
             min_visible_px: 0,
             palette: PaletteMode::Auto,
             dither: Dither::None,

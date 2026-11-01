@@ -8,6 +8,7 @@ use crate::MANIFEST_VERSION;
 use crate::RgbCss;
 use crate::config::write_atomic;
 use crate::error::{PixError, Result};
+use crate::gutter::GutterStyle;
 use crate::palette::{Dither, PaletteMode};
 use crate::paths::Paths;
 use crate::placement::Placement;
@@ -28,6 +29,10 @@ pub struct Settings {
     pub palette: Option<PaletteMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dither: Option<Dither>,
+    /// How the `cover-gutter` ring is filled (only meaningful for
+    /// `cover-gutter`). `None` ⇒ inherit `default_gutter_style`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gutter_style: Option<GutterStyle>,
 }
 
 /// One library entry. The **original** lives on disk at
