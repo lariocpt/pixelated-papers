@@ -13,17 +13,17 @@ source=("git+${url}.git#tag=v${pkgver}")
 sha256sums=('SKIP')   # set from `git archive` once tags are public
 
 build() {
-  cd "$pkgname-$pkgver"
+  cd "$pkgname"
   cargo build --release --locked -p pixpapers
 }
 
 check() {
-  cd "$pkgname-$pkgver"
+  cd "$pkgname"
   cargo test --release --workspace --locked
 }
 
 package() {
-  cd "$pkgname-$pkgver"
+  cd "$pkgname"
   install -Dm755 target/release/pixpapers "$pkgdir/usr/bin/pixpapers"
   install -Dm644 docs/man/pixpapers.1 "$pkgdir/usr/share/man/man1/pixpapers.1"
   install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
