@@ -823,6 +823,63 @@ fn export_default_auto_is_rgba() {
     assert_eq!((info.width, info.height), (320, 180));
 }
 
+/// auto-preset: `export --pixel auto` resolves against the requested
+/// output size (800×500 → long edge 800 → preset 8), says the resolution
+/// in the `wrote` line, exports the **byte-identical** file of an
+/// explicit `--pixel 8` export, and caches under the concrete preset —
+/// `auto` never appears in a cache filename.
+#[test]
+fn export_pixel_auto_resolves_to_concrete_bytes() {
+    if skip_without_cli_binary() {
+        return;
+    }
+    let home = Home::new();
+    let (code, out, err) = home.cli(&["add", fixture().to_str().unwrap(), "--title", "fixture"]);
+    assert_eq!(code, 0, "add failed:\n{out}\n{err}");
+    let id = home.entry_id(0);
+    let (code, out, err) = home.cli(&[
+        "export",
+        id.as_str(),
+        "800x500",
+        "--pixel",
+        "auto",
+        "--out",
+        home.root.join("auto.png").to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "export failed:\n{out}\n{err}");
+    assert!(
+        out.contains("auto→8"),
+        "the wrote line must show the resolution: {out}"
+    );
+    let (code, out, err) = home.cli(&[
+        "export",
+        id.as_str(),
+        "800x500",
+        "--pixel",
+        "8",
+        "--out",
+        home.root.join("p8.png").to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "export failed:\n{out}\n{err}");
+    assert_eq!(
+        std::fs::read(home.root.join("auto.png")).unwrap(),
+        std::fs::read(home.root.join("p8.png")).unwrap(),
+        "auto must export the exact bytes of the preset it resolved to"
+    );
+    let names: Vec<String> = std::fs::read_dir(home.paths.variants_dir(&id))
+        .unwrap()
+        .map(|f| f.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        names.iter().any(|n| n.contains("-8-fit-800x500-")),
+        "variant not cached under the concrete preset: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n.starts_with("v2-auto-")),
+        "auto leaked into a cache filename: {names:?}"
+    );
+}
+
 /// The fixture [`fixture`] falls back to (`tests/fixtures/fixture.png`) is
 /// the one shipped inside the published crate, where the repo-level
 /// `test/fixture.png` does not exist. This guard keeps the two

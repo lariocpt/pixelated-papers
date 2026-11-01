@@ -55,12 +55,19 @@ pub fn list_row(
 
 /// The always-visible caption block (C.2): output size, pixel, placement,
 /// palette, dither, bg, gutter — the exact `ResolvedSettings` the daemon
-/// would use, at the preview canvas size.
+/// would use, at the preview canvas size. An `auto` pixel shows its
+/// resolved preset for that canvas (`pixel auto→32`), because that is
+/// what actually renders there.
 pub fn caption_lines(r: &ResolvedSettings, canvas: (u32, u32), enabled: bool) -> Vec<String> {
+    let pixel = if r.pixel == pixcore::Pixel::Auto {
+        format!("auto→{}", r.pixel.resolve_for(canvas))
+    } else {
+        r.pixel.to_string()
+    };
     let mut lines = vec![
         format!(
             "{}×{} · pixel {} · {}",
-            canvas.0, canvas.1, r.pixel, r.placement
+            canvas.0, canvas.1, pixel, r.placement
         ),
         format!("palette {} · dither {}", r.palette, r.dither),
         format!("bg {} · gutter {}px", r.bg_color, r.gutter_px),
@@ -307,6 +314,33 @@ mod tests {
         assert_eq!(lines.len(), 4);
         // the R6-off note rides along when pixelation is disabled
         assert_eq!(caption_lines(&r, (116, 28), false).len(), 5);
+    }
+
+    #[test]
+    fn caption_resolves_auto_for_the_canvas() {
+        // auto shows the preset it resolves to at the preview canvas —
+        // the same rule the daemon applies per output.
+        let r = ResolvedSettings::resolve(
+            &pixcore::Settings {
+                pixel: Some(pixcore::Pixel::Auto),
+                ..Default::default()
+            },
+            &Default::default(),
+        );
+        assert_eq!(
+            caption_lines(&r, (116, 28), true)[0],
+            "116×28 · pixel auto→8 · fit"
+        );
+        assert_eq!(
+            caption_lines(&r, (1920, 1080), true)[0],
+            "1920×1080 · pixel auto→16 · fit"
+        );
+        // a concrete preset never grows the arrow
+        let r16 = ResolvedSettings::resolve(&Default::default(), &Default::default());
+        assert_eq!(
+            caption_lines(&r16, (1920, 1080), true)[0],
+            "1920×1080 · pixel 16 · fit"
+        );
     }
 
     #[test]

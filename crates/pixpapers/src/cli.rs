@@ -37,7 +37,7 @@ enum Cmd {
     Remove { id: String },
     /// Apply a wallpaper now (starts the daemon if needed)
     Set { id: String },
-    /// Set the pixel look for one wallpaper: 8|16|32|64|128|normal
+    /// Set the pixel look for one wallpaper: 8|16|32|64|128|normal|auto
     Pixel { id: String, pixel: Pixel },
     /// Set placement for one wallpaper: fit|cover-gutter|cover-crop|stretch
     Placement { id: String, placement: Placement },
@@ -79,6 +79,8 @@ enum Cmd {
     Export {
         id: String,
         size: String,
+        /// Pixel preset for this render only (not persisted); `auto`
+        /// picks from the output size
         #[arg(long)]
         pixel: Option<Pixel>,
         #[arg(long)]

@@ -757,7 +757,8 @@ fn edit_knob(
     }
 }
 
-/// `p` — cycle the pixel preset 8→16→32→64→128→normal→8…
+/// `p` — cycle the pixel preset 8→16→32→64→128→normal→auto→8…
+/// (`auto` picks the preset from the output size at render time).
 fn cycle_knob(app: &mut App, f: impl FnOnce(&pixcore::ResolvedSettings, &mut Settings) -> String) {
     let Some(entry) = app.selected().cloned() else {
         app.last = "nothing selected".into();
@@ -1211,8 +1212,8 @@ mod tests {
         assert_manifest_knob(&home, "pixel", "32");
         assert_eq!(app.last, format!("{id0} → pixel 32"), "{}", app.last);
         assert_eq!(applies(&harness), 1, "{:?}", harness.requests());
-        // wraps: 32 → 64 → … → normal → 8
-        for want in ["64", "128", "normal", "8"] {
+        // wraps: 32 → 64 → … → normal → auto → 8
+        for want in ["64", "128", "normal", "auto", "8"] {
             assert!(matches!(
                 key(&mut app, KeyCode::Char('p')),
                 KeyOutcome::Handled
@@ -1221,7 +1222,7 @@ mod tests {
         }
         assert_eq!(
             applies(&harness),
-            5,
+            6,
             "every step on the current entry Applies"
         );
     }

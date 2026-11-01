@@ -282,6 +282,16 @@ pub fn export(
         },
         cfg,
     );
+    // An `auto` pixel resolves against the requested output size — the
+    // same pure rule the daemon applies per output — so the exported file
+    // (name, bytes and the line below) names the concrete preset used.
+    let auto_requested = resolved.pixel == Pixel::Auto;
+    let resolved = resolved.resolved_for_output(out);
+    let pixel_token = if auto_requested {
+        format!("auto→{}", resolved.pixel)
+    } else {
+        resolved.pixel.to_string()
+    };
     // The one offline render path, shared with the TUI preview (S6):
     // variant generate-or-cache → composite (view from ORIGINAL dims —
     // invariant #2) → the exact export encoder. Byte-identical to the
@@ -307,7 +317,7 @@ pub fn export(
         dest.display(),
         final_img.width(),
         final_img.height(),
-        resolved.pixel,
+        pixel_token,
         resolved.placement,
         buf.len() as f64 / 1024.0
     );
