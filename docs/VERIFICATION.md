@@ -796,3 +796,89 @@ second pass is a cache hit).
   golden stays at its 6 keys; `p` one step from 16 is still 32). TUI
   goldens **not** regenerated — no caption row or HINTS change, the 10
   pinned 100×30 frames are byte-identical (goldens test green).
+
+## live wallpapers: slideshow (2026-11-01, this change)
+
+Still-image slideshow cycling the library in `list` order, derived from
+the wall clock at render time — `active = (unix_now / interval_secs) %
+entry_count`. The daemon stays a pure renderer; the poll loop replaces its
+idle 300 ms timer with a wake-up at the next boundary only while the
+slideshow is on, so the OFF idle cost is byte-for-byte the historical one.
+No epoch/counter is stored, so the phase survives a restart (the honest
+caveat: the phase is aligned to the Unix epoch, so enabling mid-slot shows
+that slot and the first change can land in under a full interval).
+
+- **Unit (fake clock, no sleeps)** — `pixcore::slideshow`: `active_index`
+  (incl. wrap ordering + empty-list guard), `secs_to_next_change` (always
+  `1..=interval`, never 0), `next_change_unix`, `active_entry` (falls back
+  to `manifest.current` when off, `None` on an empty library). 9 tests.
+- **Config/back-compat** — `[slideshow]` `{enabled, interval_secs}`,
+  `#[serde(default)]` (off, 300 s). Old configs load unchanged; no manifest
+  or config version bump. 3 IPC round-trip tests: a report with the new
+  optional fields parses, an old report (fields absent) reads as `None`,
+  and the fields re-serialize only when present.
+- **CLI/status (real binary, hermetic `PIXPAPERS_HOME`, display env
+  cleared)** — `crates/pixpapers/tests/slideshow.rs`, 10 tests: `on`/`off`/
+  `interval` round-trips, `interval 0` is a user error (exit 1), off output
+  unchanged, the on `status` line and the `status --json`
+  `slideshow_enabled`/`next_change` fields, and daemon-down honest note.
+
+### Idle cost (on vs off) — release build, throwaway Xvfb, hermetic home
+
+Command (on the box the daemon runs on; the x11 backend needs a 24-bit
+truecolor display, hence the explicit Xvfb screen):
+`xvfb-run -s "-screen 0 1024x768x24" test/bench-slideshow.sh`
+
+| state | idle CPU (6 s window) | VmRSS |
+|---|---|---|
+| slideshow **off** (300 ms poll) | 0.000 % of one core | 4980 kB |
+| slideshow **on** (interval 300 s) | 0.000 % of one core | 5116 kB |
+
+The ON case is measured at a long interval so no change lands inside the
+window — the render a change *does* trigger is the slideshow's real work,
+not idle overhead, and the timer advance is deliberately **not** folded
+into the interactive `--bench` switch latency (that stays a render timing).
+
+### Website (`docs/index.html`, one file)
+
+Added a "live wallpapers" section with **3 real `pixpapers export` PNGs**
+into `docs/img/slideshow-{1,2,3}.png` (960×540 from the release binary).
+The delivering session did not record the exact per-entry knobs; measured
+from the delivered PNGs instead: 16 px block grid (constant-colour runs
+along block boundaries = exactly 16), images 1 and 3 quantized to exactly
+32 colours, image 2 is a **cover-gutter bleed** render — its ring holds 47
+distinct block colours where a solid mat would hold 1. (This paragraph
+first claimed all three were `fit --palette vga`; that was measured wrong
+— none is the VGA palette — corrected 2026-11-01 at review.) Each has
+descriptive `alt`. The auto-cycling viewer is **pure
+CSS** (`steps()` keyframes), shown only under `@media
+(prefers-reduced-motion: no-preference)`; under reduce-motion, or with JS
+off, it degrades to a readable 3-up strip (`role="img"` + one `aria-label`,
+individual `alt` kept, the decorative cycle `aria-hidden`). Re-verified
+**zero external subresource requests** after the edit: every `src` is a
+relative `img/*.png`, both `<script>` blocks are inline, the favicon is a
+`data:` URI; the only `https://` strings are pre-existing `<a href>`
+navigation links (not fetched on load).
+
+### Workspace gates
+
+**108 pixcore + 69 pixpapers + 10 slideshow-integration tests green**
+(pixcore +9: the slideshow time-model; pixpapers +3: the IPC back-compat;
++10 in `tests/slideshow.rs`). `cargo build --release` clean · `cargo clippy
+--workspace --all-targets --all-features -- -D warnings` clean · `cargo fmt
+--all --check` clean · `env -u WAYLAND_DISPLAY -u DISPLAY test/smoke.sh` ok
+· `test/verify-x11.sh target/release/pixpapers` ok (root pixmap still
+byte-identical to the export oracle; stop clears roots; exit-43 contract
+unchanged) · `test/verify-tui.sh target/release/pixpapers` ok (B-knob stays
+6 keys; **no new TUI key or caption** — the 10 pinned 100×30 goldens are
+byte-identical, goldens test green).
+
+### Not run / deferred
+
+- **Vision-rig visual pass: NOT RUN** — the screenshot/analysis rig refused
+  the capture at run time; the website was checked structurally instead
+  (zero external requests, reduced-motion gating, JS-off strip, real alt).
+- **Animated / video wallpaper sources remain deferred on purpose** — the
+  slideshow cycles **still** images only; there is no video-decoder
+  dependency (no decoder dependency was introduced). AGENTS.md names this
+  explicitly.

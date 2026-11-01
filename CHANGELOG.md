@@ -7,6 +7,7 @@ Semantic Versioning. The build log behind each area lives in
 ## [Unreleased]
 
 ### Added
+- **Live wallpapers (slideshow)** — a still-image slideshow through the existing library. `pixpapers slideshow on [SECONDS]` starts cycling the library's entries in order, `pixpapers slideshow off` stops, and `pixpapers slideshow interval <SECONDS>` changes the cadence (default 300 s). No epoch or counter is stored: the active wallpaper is derived at render time from the wall clock — `active = (unix_now / interval) % entry_count` — so the daemon stays a pure renderer, the phase survives a restart, and the poll loop simply wakes at the next boundary (idle cost unchanged when off; measured in docs/VERIFICATION.md). `status` and `status --json` show `slideshow: on · next change in Ns`. TOML: `[slideshow] enabled = true, interval_secs = 300`. Backward compatible (no manifest or config version bump; old files load unchanged). This is a deferred idea built on explicit request — it cycles *still* wallpapers only; decoding **animated/video** sources stays out (see AGENTS.md). New CLI: `pixpapers slideshow on|off|interval <SECONDS>`. See [docs/CLI.md](docs/CLI.md#slideshow-live-wallpapers).
 - **`auto` pixel preset**: the pixel look can pick itself from the output's
   size instead of being hand-set per wallpaper. `auto` is accepted wherever a
   preset is — `pixpapers pixel <ID> auto`, `pixpapers default pixel auto`,

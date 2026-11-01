@@ -52,6 +52,18 @@ pixpapers -V | -h
 
 Changing a default re-applies to any *unset* current wallpaper immediately.
 
+## Slideshow (live wallpapers)
+
+A still-image slideshow cycling the library's entries in `list` order. State is *not* kept in the daemon: the active wallpaper is computed at render time from the wall clock, `active = (unix_now / interval_secs) % entry_count`, so the phase is stable across restarts and the daemon stays a pure renderer. Because the phase is aligned to the Unix epoch, enabling mid-slot shows that slot and the first change can land in under a full interval.
+
+| Command | Meaning |
+|---|---|
+| `slideshow on [SECONDS]` | Turn the cycle on. Optional `SECONDS` sets the interval in the same call. Auto-starts the daemon like `set`. |
+| `slideshow off` | Stop cycling; the current wallpaper stays put. |
+| `slideshow interval <SECONDS>` | Change the cadence (1–86400). `0` is a user error (exit 1). |
+
+TOML (`config.toml`): `[slideshow]` with `enabled` (bool, default `false`) and `interval_secs` (u64, default `300`). `status` prints `slideshow: on · next change in Ns` (and `status --json` gains `slideshow_enabled` + `next_change`) only while it is on — the off output is unchanged. Only **still** images cycle; animated/video sources are out of scope (no decoder dependency).
+
 ## Diagnostics & offline
 
 | Command | Meaning |

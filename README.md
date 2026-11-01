@@ -46,6 +46,11 @@ user unit in [`contrib/`](contrib/).
 - Global defaults for new/unset entries: `pixpapers default pixel 16`.
 - `disable` stops pixelating everything (originals only, placement kept);
   `enable` brings the look back.
+- **Live wallpapers**: `pixpapers slideshow on [SECONDS]` cycles the
+  library's stills in order (default every 300 s; `off` / `interval <S>`
+  to stop / retune). The active one is derived from the wall clock at
+  render time, so the daemon keeps owning no state. Still images only —
+  no video decoding.
 - Originals are stored; the pixelated variants are generated at the
   **absolute minimum size** — the default look is ~6 KB, not ~2 MB — and
   cached on disk forever. Switching a cached wallpaper is a read + a stretch.
@@ -140,7 +145,8 @@ arbitration, last one wins.
   button's `on-click` is the slot it flips into; a future window must keep
   `commands::*` as the only state path and `status --json` the only read
   face. The TUI is the GUI for now.
-- **Live/animated wallpapers** — one static look, done fast.
+- **Animated/video wallpapers** — the slideshow cycles *existing* stills
+  on a timer; decoding video or animating a wallpaper in place is out.
 - **Auto-preset by image content** — `auto` picks the preset from the
   output's *size*, never from the picture: you pick the look; the tool
   doesn't guess from pixels.

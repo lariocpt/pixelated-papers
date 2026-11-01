@@ -19,12 +19,16 @@ WAYLAND_DISPLAY=wayland-1 test/verify-waybar.sh
 WAYLAND_DISPLAY=wayland-1 test/bench-daemon.sh target/release/pixpapers 25
 ```
 
-Tests: 99 pixcore (config atomicity + legacy palette bool, manifest
+Tests: 108 pixcore (config atomicity + legacy palette bool, manifest
 version guard + palette/dither knobs, placement proptests + short tokens,
 bar-label goldens, quantize goldens + v0.1 byte-identity goldens
 (presets and `normal`), versioned variant cache, preview canvas/guard,
-sixel encoder, auto-preset rule (proptest) + cache-name concreteness). The daemon's
-IPC/loop logic runs against in-process harnesses — headless is normal.
+sixel encoder, auto-preset rule (proptest) + cache-name concreteness, and
+the slideshow time-model (`active_index`/`secs_to_next_change`/`active_entry`,
+fake clock — no sleeps). The daemon's IPC/loop logic runs against
+in-process harnesses — headless is normal. `crates/pixpapers/tests/slideshow.rs`
+drives the real CLI/status face over `slideshow` + the `[slideshow]` config
+in a hermetic `PIXPAPERS_HOME`.
 The CLI goldens run the **built** `pixpapers` binary and refuse one that
 is stale relative to the sources that compile into it (`cargo test` alone
 does not rebuild the plain bin for in-bin unit tests) — run
@@ -93,10 +97,13 @@ the same change.
 
 ## Deferred by decision, not by omission
 
-GUI window, live wallpapers, auto-preset **by image content** (the
-shipped `auto` preset picks from the output size only — the picture
-itself is never analysed), MPRIS-ish hooks, exact fractional buffers,
-headless-sway CI. Don't "helpfully" implement these without asking;
-they're v0.2+ scoped on purpose. (The blurred-bleed gutter shipped at
-25f9a90 as `gutter-style bleed`; the by-output-size auto-preset shipped
-after it — both were on this list until they shipped.)
+GUI window, auto-preset **by image content** (the shipped `auto` preset
+picks from the output size only — the picture itself is never analysed),
+MPRIS-ish hooks, exact fractional buffers, headless-sway CI. Don't
+"helpfully" implement these without asking; they're v0.2+ scoped on
+purpose. (The blurred-bleed gutter shipped at 25f9a90 as `gutter-style
+bleed`; the by-output-size auto-preset shipped after it — both were on
+this list until they shipped. "Live wallpapers" shipped as a still-image
+**slideshow** (`pixpapers slideshow`, render-time clock model) — but
+**animated/video** wallpaper sources stay deliberately deferred: there is
+no video-decoder dependency, the slideshow only cycles still images.)
