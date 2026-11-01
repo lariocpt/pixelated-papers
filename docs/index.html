@@ -160,6 +160,33 @@ footer a { color: var(--fg-muted); }
   .masthead { padding-top: 2.25rem; }
   .dl > div { grid-template-columns: 1fr; gap: 0; }
 }
+/* Live wallpapers (slideshow): pure CSS, no JS, cycles only when motion is OK.
+   Brand palette scoped to this component only. */
+#slideshow { --ss-bg: #0f1114; --ss-accent: #f7b32b; --ss-ok: #39c08f; }
+.ss-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; }
+.ss-strip img { width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover;
+  border: 1px solid var(--ss-bg); border-radius: 8px; image-rendering: pixelated; }
+.ss-note { font-family: var(--font-mono); font-size: .72rem; color: var(--fg-muted);
+  margin: .55rem 0 0; }
+.ss-note b { color: var(--ss-ok); font-weight: 600; }
+/* The auto-cycling viewer is hidden by default, so with JS off AND under
+   "reduce motion" readers get the readable 3-up strip above. */
+.ss-cycle { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .ss-strip { display: none; }
+  .ss-cycle { display: block; position: relative; aspect-ratio: 16 / 9; overflow: hidden;
+    border-radius: 10px; border: 1px solid var(--ss-bg); background: var(--ss-bg); }
+  .ss-cycle img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+    image-rendering: pixelated; opacity: 0; margin: 0; border: 0; border-radius: 0;
+    animation: pixslide 12s steps(1, end) infinite; }
+  .ss-cycle img:nth-child(1) { animation-delay: 0s; }
+  .ss-cycle img:nth-child(2) { animation-delay: 4s; }
+  .ss-cycle img:nth-child(3) { animation-delay: 8s; }
+  .ss-beat { position: absolute; left: 0; bottom: 0; height: 3px; width: 0;
+    background: var(--ss-accent); animation: pixbeat 12s steps(3, end) infinite; }
+  @keyframes pixslide { 0%, 33.333% { opacity: 1; } 33.334%, 100% { opacity: 0; } }
+  @keyframes pixbeat { 0% { width: 0; } 100% { width: 100%; } }
+}
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
@@ -281,6 +308,40 @@ footer a { color: var(--fg-muted); }
       concrete presets. <code>auto</code> picks from the output's size —
       never from the picture.
     </p>
+  </section>
+
+  <section id="slideshow" aria-label="Live wallpapers">
+    <h2><span class="h">##</span> live wallpapers</h2>
+    <p>
+      Turn the library into a still-image slideshow.
+      <code>pixpapers slideshow on</code> cycles your wallpapers on a timer
+      (every 300&nbsp;s by default; <code>off</code> to stop,
+      <code>slideshow interval &lt;sec&gt;</code> to retune). The active frame
+      is read straight from the wall clock at render time —
+      <code>active = (unix&#8203;_now / interval) % count</code> — so the daemon
+      still owns no state and the phase survives a restart. Still images only;
+      no video decoding.
+    </p>
+    <!-- Readable strip: always present, shown when motion is reduced or JS is off. -->
+    <div class="ss-strip" role="img"
+         aria-label="Three library wallpapers that a slideshow cycles through: a pixelated sunset over mountain ridges, a cover-gutter bleed wallpaper, and a close-up field of pixel blocks.">
+      <img src="img/slideshow-1.png" width="960" height="540" loading="lazy"
+           alt="A sunset over two mountain ridges under a starry sky, rendered as a 16&nbsp;px VGA-palette wallpaper.">
+      <img src="img/slideshow-2.png" width="960" height="540" loading="lazy"
+           alt="A cover-gutter wallpaper whose blurred edges bleed into the mat, the second frame of the cycle.">
+      <img src="img/slideshow-3.png" width="960" height="540" loading="lazy"
+           alt="A close-up field of solid square colour blocks, the third frame of the cycle.">
+    </div>
+    <!-- Decorative auto-cycling duplicate: only rendered when motion is welcome. -->
+    <div class="ss-cycle" aria-hidden="true">
+      <img src="img/slideshow-1.png" alt="" width="960" height="540" loading="lazy">
+      <img src="img/slideshow-2.png" alt="" width="960" height="540" loading="lazy">
+      <img src="img/slideshow-3.png" alt="" width="960" height="540" loading="lazy">
+      <div class="ss-beat"></div>
+    </div>
+    <p class="ss-note"><b>slideshow</b> · <code>on</code> · <code>off</code> ·
+      <code>interval&nbsp;&lt;sec&gt;</code> — the cycle above is pure CSS and
+      holds still when you ask for reduced motion.</p>
   </section>
 
   <section aria-label="Where it runs">
