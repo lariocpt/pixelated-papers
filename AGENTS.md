@@ -73,7 +73,11 @@ Discipline over convenience. v0.1 runs on: image, serde(+json), toml,
 thiserror, anyhow, clap(+complete), dirs, blake3, tempfile, png,
 wayland-client, wayland-protocols(-wlr), libc, log/env_logger, and
 ratatui+crossterm (default-on `tui` feature; +270 KiB release, measured).
-Dev-only: proptest, snapbox, criterion. `signal-hook` was **removed on
+The `gui` feature (default-**off**) pulls eframe/egui/glow/winit only when
+built with `--features gui` (+7.2 MiB release, measured); with the feature
+off the binary is unchanged by the GUI source — the only OFF delta is the
+`image` 0.25.10 patch bump eframe's dependency constraint forces (+60 KiB;
+see docs/VERIFICATION.md). Dev-only: proptest, snapbox, criterion. `signal-hook` was **removed on
 purpose** (its flag handlers silently never fired here — daemon/mod.rs has
 the raw sigaction replacement; don't re-add it without re-testing V17).
 Runtime deps still need a numbers-based justification; dev-deps just need
@@ -97,7 +101,7 @@ the same change.
 
 ## Deferred by decision, not by omission
 
-GUI window, auto-preset **by image content** (the shipped `auto` preset
+auto-preset **by image content** (the shipped `auto` preset
 picks from the output size only — the picture itself is never analysed),
 MPRIS-ish hooks, exact fractional buffers, headless-sway CI. Don't
 "helpfully" implement these without asking; they're v0.2+ scoped on

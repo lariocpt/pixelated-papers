@@ -134,6 +134,15 @@ arbitration, last one wins.
   where the terminal supports the kitty image protocol, a text fallback
   elsewhere; add, set, remove and the preset/palette/dither cycles all
   by key. Key table in [docs/CLI.md](docs/CLI.md).
+- **Native GUI** — `pixpapers gui`, a native egui/`eframe` control window,
+  shipped behind an opt-in `gui` cargo feature (default **off**, so the
+  default binary carries no `eframe` dependency). It is a client only: every
+  action routes through the same `commands::*` + `cli::apply_now` the CLI and
+  TUI use, so a set from the window writes byte-for-byte the same manifest as
+  `pixpapers set` (proven in tests), and thumbnails reuse the cached variant
+  PNGs — the window never renders a full-size image. `cargo build --release
+  --features gui` (11.6 MiB vs 4.7 MiB default); evidence in
+  [docs/VERIFICATION.md](docs/VERIFICATION.md#native-gui).
 - **waybar module** — `pixpapers bar` plus the ready-made module snippet
   in [`contrib/waybar/`](contrib/waybar/): click opens the TUI in a
   terminal, the wheel cycles wallpapers (up = next, down = previous,
@@ -141,10 +150,6 @@ arbitration, last one wins.
 
 ## Deliberately not in v0.2
 
-- **GUI window** (native egui/`eframe` or a local web view): the waybar
-  button's `on-click` is the slot it flips into; a future window must keep
-  `commands::*` as the only state path and `status --json` the only read
-  face. The TUI is the GUI for now.
 - **Animated/video wallpapers** — the slideshow cycles *existing* stills
   on a timer; decoding video or animating a wallpaper in place is out.
 - **Auto-preset by image content** — `auto` picks the preset from the

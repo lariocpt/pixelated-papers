@@ -882,3 +882,108 @@ byte-identical, goldens test green).
   slideshow cycles **still** images only; there is no video-decoder
   dependency (no decoder dependency was introduced). AGENTS.md names this
   explicitly.
+
+## Native GUI
+
+Opt-in `gui` cargo feature (`gui = ["dep:eframe"]`, **default off**) adding
+`pixpapers gui`: a native egui/`eframe` control window. The view-model
+(`src/gui/model.rs`) is headless and unit-tested; `app.rs` is a thin eframe
+paint layer. The GUI is a **client** — it mutates state only through the
+existing `commands::*` + `cli::apply_now`, never owning state itself.
+
+### Dependencies + justification (numbers)
+
+The only new runtime dependency is `eframe` (0.37,
+`default-features=false, features=["default_fonts","glow","wayland","x11"]`,
+`optional=true`) — glow/OpenGL only, no wgpu/http/persistence. Thumbnails
+reuse the existing `image` dep (already a direct non-optional workspace
+dependency); no new crate decodes the cached variants. The OFF binary pulls
+none of this tree — `eframe` is `optional` and the `gui` module is
+`#[cfg(feature = "gui")]`.
+
+### Size + clean build time (exact commands)
+
+Both from a full `cargo clean` on this tree (rustc/cargo 1.97.1):
+
+| Build | Command | Size | Clean build | SHA-256 |
+|---|---|---|---|---|
+| GUI **off** (default) | `cargo clean && cargo build --release` | 4,907,968 B | ~30 s | `f01aeb4416d4b84e…` |
+| GUI **on** | `cargo clean && cargo build --release --features gui` | 12,138,488 B | ~75 s | `2aa40aaad494173c…` |
+
+The ON−OFF delta (+7,230,520 B ≈ 6.9 MiB) is the eframe/egui/glow/winit tree.
+
+### The GUI source is OFF-neutral: 0 bytes (control build)
+
+The pre-GUI HEAD baseline binary was 4,847,016 B (`ca503d56e40395ed…`). My
+GUI-off binary is 4,907,968 B — **+60,952 B**. That delta is **not** GUI code:
+eframe 0.37 hard-requires `image ≥ 0.25.10`, which forces the shared `image`
+dep up from HEAD's 0.25.9 (`cargo update -p image --precise 0.25.9` fails:
+*"required by package eframe v0.37.0"*), and that patch bump is in the
+dependency tree even when `gui` is off.
+
+Proof the GUI *source* adds nothing when the feature is off — a control build
+of the **pristine HEAD source** (`51c910c`, no `src/gui/`) checked out in a
+worktree, compiled **with my `Cargo.lock`** (eframe + image 0.25.10) and
+`cargo build --release` (no `--features gui`) produced `f01aeb4416d4b84e…`
+(4,907,968 B) — **byte-for-byte identical** to my GUI-off binary. So the
+feature-off binary is exactly "HEAD + the forced image bump"; the GUI code
+contributes 0 bytes off. Full byte-identity to the pre-GUI `ca503d56`
+baseline is impossible **only** because of that eframe-forced `image` patch,
+disclosed here rather than hidden.
+
+### View-model tests (headless)
+
+`cargo test --features gui` runs 5 new tests in `src/gui/model::tests`:
+`dirty_state_lifecycle`, `validate_gates_save`, `global_switches_update_config`,
+and two byte-identity equivalence tests — `gui_set_matches_cli_set_bytes` and
+`gui_save_matches_cli_knob_bytes` — that drive an in-process `Gui` and the real
+CLI **subprocess** against the **same** hermetic `PIXPAPERS_HOME` and assert the
+manifest bytes are identical (invariant: a GUI set == a CLI set). Test #1 is
+proven, not asserted by construction.
+
+### Feature matrix (all green)
+
+- `cargo build --release` — ok (OFF binary `f01aeb44`).
+- `cargo test --workspace` — ok (187: 108 pixcore + 69 pixpapers + 10 sixel).
+- `cargo test --workspace --features gui` — ok (192: +5 `gui::model` tests).
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` — clean.
+- `cargo fmt --all --check` — clean.
+- `env -u WAYLAND_DISPLAY -u DISPLAY test/smoke.sh` — ok.
+- `test/verify-x11.sh target/release/pixpapers` — ok.
+- `test/verify-tui.sh target/release/pixpapers` — ok (10 TUI goldens byte-identical; `B` knob set still exactly 6 keys).
+- Help drift: `pixpapers --help` on the OFF binary does **not** list `gui`;
+  `pixpapers gui` on the OFF binary is an unknown subcommand.
+
+### Real screenshot (not a mockup)
+
+`docs/img/gui-control.png` is one real capture of `pixpapers gui` on a hermetic
+`PIXPAPERS_HOME` under Xvfb with software GL:
+
+```sh
+env -u WAYLAND_DISPLAY DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 \
+  GALLIUM_DRIVER=llvmpipe pixpapers gui        # GUI-on binary
+# variant cache populated first by a real daemon render on :99 (pixpapers daemon --backend x11 + set)
+DISPLAY=:99 import -window root win-shot.png
+```
+
+The window shows the Library tab, the selected entry with its cached-variant
+thumbnail, the action row (set now / cycle / remove), and the per-wallpaper
+knob panel headed `This wallpaper — Sunset Gradient`. It is **not** a full
+accessibility or platform-matrix claim: it is a single Xvfb software-GL frame.
+
+### Website
+
+`docs/index.html` gained a "native window" section referencing the real
+screenshot via the relative `img/gui-control.png`. Re-verified the site
+contract: one file, zero external asset requests (all `src=` are `img/*.png`
+or `data:` URIs; external refs are only `<a href>` navigation to
+github/crates.io), palette (`#0f1114`/`#f7b32b`/`#39c08f`) unchanged, favicon
+untouched.
+
+### Not run / deferred (GUI)
+
+- The GUI was **not** exercised under a real Wayland/niri compositor or with a
+  GPU — only Xvfb software GL. `eframe`'s wayland feature is compiled in but
+  untested here.
+- No screen-reader / keyboard-only accessibility pass was run against the
+  window; the view-model is unit-tested, not the widget a11y tree.

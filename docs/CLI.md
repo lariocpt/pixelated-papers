@@ -138,6 +138,21 @@ status bar, never guessed silently):
 a protocol or the fallback (the test lever and the escape hatch for a
 false positive).
 
+## Native GUI
+
+| Command | Meaning |
+|---|---|
+| `gui` | Native egui/`eframe` control window: Library tab (list + cached thumbnail + set/cycle/remove), a per-wallpaper knob panel, a Status tab, the global Pixelation switch and the slideshow interval. **Ships behind the default-off `gui` cargo feature** — the default binary has no `eframe` dependency and does not list this subcommand in `--help`. Build it with `cargo build --release --features gui`. |
+
+Like the TUI, the GUI is a **client, not a second owner of state**: every
+button routes through the same `commands::*` function the matching CLI
+subcommand calls, then the same `cli::apply_now` seam — a wallpaper set
+from the window writes a byte-for-byte identical manifest to `pixpapers
+set` (asserted in `src/gui/model.rs` tests), and a dead daemon only changes
+the wording, never the file writes. The window never renders a full-size
+image: thumbnails reuse the cached variant PNGs. A dirty edit gates Save
+and reloads from disk on refresh (the on-disk manifest is authoritative).
+
 ## Waybar
 
 `contrib/waybar/` ships a toolbar module (config snippet + README):
