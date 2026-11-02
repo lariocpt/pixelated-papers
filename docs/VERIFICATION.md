@@ -987,3 +987,67 @@ untouched.
   untested here.
 - No screen-reader / keyboard-only accessibility pass was run against the
   window; the view-model is unit-tested, not the widget a11y tree.
+
+## release: v0.3.0 — bleed, auto preset, slideshow, native GUI (2026-11-02)
+
+Minor release over `9f0b893`: four additive user-facing features —
+gutter-style **bleed**, the by-output-size **`auto`** pixel preset, the
+still-image **slideshow**, and the default-off **native GUI**. `pixcore`
+bumps to 0.3.0 on genuinely new public surface (`Pixel::resolve_for`, the
+`slideshow` time-model module, the bleed gutter ring); `pixpapers` 0.3.0
+declares `pixcore = "0.3.0"`. No manifest or config version bump — every
+feature is backward compatible.
+
+- Workspace gates at the release tree (`6086ba1`): 108 pixcore + 69
+  pixpapers + 10 slideshow green (187; **192** with `--features gui`, +5
+  `gui::model`) · `clippy --workspace --all-targets -- -D warnings` clean ·
+  `fmt --check` clean · `env -u WAYLAND_DISPLAY test/smoke.sh` ok ·
+  `test/verify-x11.sh` ok · `test/verify-tui.sh` ok.
+- Cargo.lock churn was only `pixcore`/`pixpapers` `0.2.1 → 0.3.0`.
+
+### Release-chain evidence (post-tag)
+
+- `main` fast-forwarded `9267746..6086ba1`; annotated tag `v0.3.0` (object
+  `889c8e7`, peels to `6086ba1` = pushed HEAD) pushed to origin.
+- `cargo publish -p pixcore` — dry-run first (50 files, no stray local/
+  secret files, verified build compiled), then real: **pixcore 0.3.0 live**
+  on crates.io. Confirmed queryable before publishing the dependent crate.
+- `cargo publish -p pixpapers` — dry-run resolved `pixcore 0.3.0` **from the
+  registry** and compiled, then real: **pixpapers 0.3.0 live**.
+- Fresh install under a hermetic `CARGO_HOME` + `PIXPAPERS_HOME`:
+  `cargo install pixpapers --version 0.3.0` resolves `pixcore 0.3.0` +
+  `pixpapers 0.3.0` from the registry (not the git source) and reports
+  **0.3.0**; an `add`/`list`/`export` smoke on the installed binary passes,
+  and `export --pixel auto --gutter-style bleed` wrote a
+  `v2-16-fit-1920x1080-auto-bleed.png` variant (`auto→16`) — the auto and
+  bleed features run in the *published* crate.
+- Published bare `.crate` self-test: unpacked `pixpapers-0.3.0` (pixcore
+  resolved from the registry), `cargo test` = 69 (`main.rs`) + 10
+  (`slideshow.rs`) = **79 passed / 0 failed**. This run emitted **0**
+  `note: skipping CLI golden` lines — `cargo test` materialised
+  `target/debug/pixpapers`, so `skip_without_cli_binary` found a binary and
+  the CLI goldens **executed against the published artifact** rather than
+  skipping. That is a *stronger* signature than v0.2.1's "62 passed / 33
+  skips"; 0 failures either way. `.crate` sha256: pixcore
+  `1d973063…c9113` (50 files), pixpapers `83851d48…885d` (38 files).
+- GitHub Release **`v0.3.0`** published (converted the workflow's draft to
+  published with a hand-shaped title/body; the binary + `SHA256SUMS` assets
+  were removed to match v0.2.1's asset-free shape). Source tarball sha256
+  `8f90478c…61998` (recorded in the notes). No lingering `Draft v0.3.0`
+  remains — this release reused the workflow draft rather than leaving it
+  alongside a second published release the way the v0.2.1 trail did.
+- Pages rebuilt: the live site serves the `v0.3.0` strings (release link +
+  footer). Site contract re-verified — `index.html` with zero external-origin
+  asset requests (all `src=` are same-origin `img/*.png` or `data:` URIs;
+  external refs are only `<a href>` to github/crates.io), favicon `data:`
+  URI untouched, palette unchanged.
+- `contrib/packaging/PKGBUILD` `pkgver` bumped to `0.3.0`. It stays a
+  declared draft — no AUR checkout with an `aur.archlinux.org` remote exists
+  on this box, and nothing was pushed to any new remote. AUR publication is
+  a manual follow-up.
+
+### Disclosed, not silently changed
+
+- `README.md` still lists "Native GUI" under a "Shipped in v0.2" heading —
+  pre-existing drift (the GUI shipped after 0.2.1), left as-is rather than
+  rewritten during the release sweep.
