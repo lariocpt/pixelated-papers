@@ -123,6 +123,9 @@ enum Cmd {
     /// Interactive terminal front-end (library browser + offline preview)
     #[cfg(feature = "tui")]
     Tui,
+    /// Native control window (library browser + set-now + per-image knobs)
+    #[cfg(feature = "gui")]
+    Gui,
     /// Emit a shell completion script
     Completions { shell: Shell },
 }
@@ -306,6 +309,8 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
         Cmd::Stop => status::stop(paths)?,
         #[cfg(feature = "tui")]
         Cmd::Tui => tui::run(paths, cfg)?,
+        #[cfg(feature = "gui")]
+        Cmd::Gui => crate::gui::run(paths, cfg)?,
         Cmd::Completions { shell } => {
             let mut app = <Cli as clap::CommandFactory>::command();
             clap_complete::generate(shell, &mut app, "pixpapers", &mut std::io::stdout());

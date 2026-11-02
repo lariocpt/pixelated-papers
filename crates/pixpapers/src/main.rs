@@ -4,6 +4,8 @@
 mod cli;
 mod commands;
 mod daemon;
+#[cfg(feature = "gui")]
+mod gui;
 #[cfg(test)]
 mod harness;
 mod ipc;

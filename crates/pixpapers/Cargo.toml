@@ -21,11 +21,31 @@ x11 = ["dep:x11rb"]
 # single-threaded loop (no event-loop crate, no-tokio posture kept).
 # On by default; off for a slim build.
 tui = ["dep:ratatui", "dep:crossterm"]
+# `pixpapers gui` — native egui control window. OFF by default: with the
+# feature off the GUI source adds ZERO bytes to the binary (proven by a
+# byte-identical control build in docs/VERIFICATION.md, "Native GUI"). eframe
+# drags a large winit/glow tree the default build never links; the only OFF
+# delta vs the pre-GUI binary is the `image` 0.25.9→0.25.10 patch eframe's
+# dependency constraint forces (+60 KiB). The release size/build delta and the
+# runtime-dependency justification are measured in docs/VERIFICATION.md. The
+# GUI is a thin client: it mutates state only through the same commands::* +
+# cli::apply_now the TUI/CLI use.
+gui = ["dep:eframe"]
 
 [dependencies]
 x11rb = { workspace = true, optional = true }
 ratatui = { workspace = true, optional = true }
 crossterm = { workspace = true, optional = true }
+# Native GUI, behind the `gui` feature. glow (OpenGL) backend only — no wgpu;
+# default_fonts so text renders without a system-font loader; wayland+x11 so
+# it opens on either compositor (headless Xvfb included). default-features are
+# off to drop the http/wgpu/persistence trees.
+eframe = { version = "0.37", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+], optional = true }
 pixcore = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
