@@ -57,7 +57,11 @@ pub fn variant_path(paths: &Paths, id: &str, s: &ResolvedSettings, out: (u32, u3
     };
     paths.variants_dir(id).join(format!(
         "v{PIPELINE_VERSION}-{pixel}-{placement}{g}-{W}x{H}-{Q}{D}{BL}.png",
-        pixel = s.pixel.resolve_for(out),
+        // Route through the content resolver so a directly-supplied
+        // `auto-content` resolves to the same concrete preset the render
+        // path uses (idempotent for every other pixel — the cache key is
+        // ALWAYS a concrete preset, never `auto`/`auto-content`).
+        pixel = s.pixel.resolve_content_for(out, s.content_density),
         placement = s.placement,
         W = out.0,
         H = out.1,
@@ -486,7 +490,7 @@ pub fn bleed_path(paths: &Paths, id: &str, s: &ResolvedSettings, out: (u32, u32)
     };
     paths.variants_dir(id).join(format!(
         "bleed-v{PIPELINE_VERSION}-{pixel}-{W}x{H}-{Q}{D}.png",
-        pixel = s.pixel.resolve_for(out),
+        pixel = s.pixel.resolve_content_for(out, s.content_density),
         W = out.0,
         H = out.1,
         Q = s.palette,

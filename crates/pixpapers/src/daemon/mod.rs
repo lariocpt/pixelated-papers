@@ -445,6 +445,28 @@ fn status_report(backend: &ActiveBackend, paths: &Paths) -> StatusReport {
     let lib = pixcore::Library::load(paths).ok().unwrap_or_default();
     let outputs = backend.snapshot();
     let b = backend.bench_counters();
+    // When the current wallpaper uses an `auto`/`auto-content` pixel, name the
+    // concrete preset the daemon renders at its primary output (the same
+    // physical size a variant cache key uses). Never leaks a bare `auto`.
+    let current_auto_detail = lib
+        .current
+        .as_deref()
+        .and_then(|id| lib.entries.iter().find(|e| e.id == id))
+        .and_then(|e| {
+            let r = crate::commands::resolve_effective(e, &cfg);
+            let out = outputs.first().map(|o| (o.width, o.height))?;
+            let (ow, oh) = out;
+            match r.pixel {
+                pixcore::Pixel::Auto => {
+                    Some(format!("auto→{} @{ow}x{oh}", r.pixel.resolve_for(out)))
+                }
+                pixcore::Pixel::AutoContent => Some(format!(
+                    "auto-content→{} @{ow}x{oh}",
+                    r.pixel.resolve_content_for(out, r.content_density)
+                )),
+                _ => None,
+            }
+        });
     StatusReport {
         daemon_running: true,
         daemon_pid: Some(std::process::id()),
@@ -456,6 +478,7 @@ fn status_report(backend: &ActiveBackend, paths: &Paths) -> StatusReport {
         backend: Some(backend.name().to_string()),
         variants_on_disk: 0, // cheap scan done in status.rs against shared FS
         variant_bytes: 0,
+        current_auto_detail,
         bench: Some(crate::ipc::BenchReport {
             applies: b.applies,
             last_switch_ms: b.last_switch_ms,

@@ -55,14 +55,18 @@ pub fn list_row(
 
 /// The always-visible caption block (C.2): output size, pixel, placement,
 /// palette, dither, bg, gutter — the exact `ResolvedSettings` the daemon
-/// would use, at the preview canvas size. An `auto` pixel shows its
-/// resolved preset for that canvas (`pixel auto→32`), because that is
-/// what actually renders there.
+/// would use, at the preview canvas size. An `auto` / `auto-content` pixel
+/// shows its resolved preset for that canvas (`pixel auto→32`,
+/// `pixel auto-content→64`), because that is what actually renders there
+/// (`auto-content` from the persisted density, clamped to the size floor).
 pub fn caption_lines(r: &ResolvedSettings, canvas: (u32, u32), enabled: bool) -> Vec<String> {
-    let pixel = if r.pixel == pixcore::Pixel::Auto {
-        format!("auto→{}", r.pixel.resolve_for(canvas))
-    } else {
-        r.pixel.to_string()
+    let pixel = match r.pixel {
+        pixcore::Pixel::Auto => format!("auto→{}", r.pixel.resolve_for(canvas)),
+        pixcore::Pixel::AutoContent => format!(
+            "auto-content→{}",
+            r.pixel.resolve_content_for(canvas, r.content_density)
+        ),
+        other => other.to_string(),
     };
     let mut lines = vec![
         format!(

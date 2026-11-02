@@ -36,6 +36,7 @@ fn settings(pixel: Pixel, placement: Placement, palette: PaletteMode) -> Resolve
         palette,
         dither: Dither::None,
         gutter_style: pixcore::GutterStyle::Solid,
+        content_density: None,
     }
 }
 

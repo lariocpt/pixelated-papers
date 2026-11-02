@@ -317,9 +317,23 @@ pub(crate) fn handle(app: &mut App, code: KeyCode, ctrl: bool) -> KeyOutcome {
             KeyOutcome::Handled
         }
         KeyCode::Char('p') => {
-            cycle_knob(app, |r, s| {
+            // Pre-clones so the closure doesn't borrow `app` while cycle_knob
+            // mutates it: auto-content needs a probe computed from the stored
+            // original (the daemon never analyses).
+            let paths = app.paths.clone();
+            let sel = app.selected().map(|e| e.id.clone());
+            cycle_knob(app, move |r, s| {
                 let v = next_in(&Pixel::ALL, r.pixel);
                 s.pixel = Some(v);
+                // Keep the persisted content probe consistent with the preset:
+                // choosing `auto-content` measures the stored original once
+                // here; any other look clears a stale probe.
+                s.content = if v == Pixel::AutoContent {
+                    sel.as_deref()
+                        .and_then(|id| commands::content_probe_for(&paths, id))
+                } else {
+                    None
+                };
                 format!("pixel {v}")
             });
             KeyOutcome::Handled
@@ -757,8 +771,9 @@ fn edit_knob(
     }
 }
 
-/// `p` — cycle the pixel preset 8→16→32→64→128→normal→auto→8…
-/// (`auto` picks the preset from the output size at render time).
+/// `p` — cycle the pixel preset 8→16→32→64→128→normal→auto→auto-content→8…
+/// (`auto` picks from the output size; `auto-content` also reads the stored
+/// picture's detail, measured once on selection).
 fn cycle_knob(app: &mut App, f: impl FnOnce(&pixcore::ResolvedSettings, &mut Settings) -> String) {
     let Some(entry) = app.selected().cloned() else {
         app.last = "nothing selected".into();
@@ -1212,8 +1227,10 @@ mod tests {
         assert_manifest_knob(&home, "pixel", "32");
         assert_eq!(app.last, format!("{id0} → pixel 32"), "{}", app.last);
         assert_eq!(applies(&harness), 1, "{:?}", harness.requests());
-        // wraps: 32 → 64 → … → normal → auto → 8
-        for want in ["64", "128", "normal", "auto", "8"] {
+        // wraps: 32 → 64 → … → normal → auto → auto-content → 8. The
+        // `auto-content` step also persists a content probe for the entry;
+        // the manifest knob check reads the stored pixel token.
+        for want in ["64", "128", "normal", "auto", "auto-content", "8"] {
             assert!(matches!(
                 key(&mut app, KeyCode::Char('p')),
                 KeyOutcome::Handled
@@ -1222,7 +1239,7 @@ mod tests {
         }
         assert_eq!(
             applies(&harness),
-            6,
+            7,
             "every step on the current entry Applies"
         );
     }

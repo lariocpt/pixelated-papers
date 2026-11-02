@@ -7,6 +7,7 @@ use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
 
 use crate::color::RgbCss;
 use crate::config::Config;
+use crate::content::CONTENT_RULE_VERSION;
 use crate::manifest::Settings;
 use crate::palette::{Dither, PaletteMode};
 use crate::placement::{Rect, View};
@@ -23,6 +24,15 @@ pub struct ResolvedSettings {
     pub dither: Dither,
     /// How the `cover-gutter` ring is filled (mat vs blurred bleed).
     pub gutter_style: crate::gutter::GutterStyle,
+    /// Persisted content statistic (see [`crate::content`]) that lets
+    /// `auto-content` refine the block size at render time. Populated in
+    /// [`ResolvedSettings::resolve`] **only** when the manifest probe was
+    /// measured under the current [`crate::content::CONTENT_RULE_VERSION`];
+    /// a missing or stale probe leaves this `None`, so `auto-content` falls
+    /// back to the size-only floor (byte-identical to plain `auto`). Ignored
+    /// by every other preset — `resolve_content_for` only consults it for
+    /// `Pixel::AutoContent`.
+    pub content_density: Option<u32>,
 }
 
 impl ResolvedSettings {
@@ -38,6 +48,13 @@ impl ResolvedSettings {
             palette: entry.palette.unwrap_or(cfg.palette),
             dither: entry.dither.unwrap_or(cfg.dither),
             gutter_style: entry.gutter_style.unwrap_or(cfg.default_gutter_style),
+            // A stale-rule probe is treated as absent so a rule upgrade can
+            // never misread old measurements (see the field doc + the staleness
+            // guard in the auto-content resolve path).
+            content_density: entry
+                .content
+                .filter(|p| p.rule == CONTENT_RULE_VERSION)
+                .map(|p| p.density),
         }
     }
 
@@ -49,16 +66,18 @@ impl ResolvedSettings {
         }
     }
 
-    /// Resolve an `auto` pixel to the concrete preset for one output size
-    /// ([`Pixel::resolve_for`]); every other knob (and every concrete
-    /// pixel) passes through, so this is idempotent. **Every render path
-    /// must apply this before a variant cache key is built** — the cache
-    /// filenames stay concrete presets, and the daemon stays a pure
-    /// renderer (the resolution is a pure function of the output size,
-    /// no state).
+    /// Resolve the `auto` / `auto-content` pixel to the concrete preset for
+    /// one output size ([`Pixel::resolve_content_for`]); every other knob (and
+    /// every concrete pixel) passes through, so this is idempotent. For
+    /// `auto-content` this consults the persisted [`Self::content_density`]
+    /// (when fresh) and may push blocks coarser than the size-only floor;
+    /// with no usable probe it is exactly the plain `auto` floor. **Every
+    /// render path must apply this before a variant cache key is built** — the
+    /// cache filenames stay concrete presets, and the daemon stays a pure
+    /// renderer (it reads the persisted density, never re-analyses the image).
     pub fn resolved_for_output(self, out: (u32, u32)) -> Self {
         Self {
-            pixel: self.pixel.resolve_for(out),
+            pixel: self.pixel.resolve_content_for(out, self.content_density),
             ..self
         }
     }
@@ -343,5 +362,45 @@ mod tests {
         assert_eq!(r.resolved_for_output((3840, 2160)).pixel, Pixel::B16);
         // R6 still wins over auto: disabled ⇒ normal, whatever auto would pick
         assert_eq!(r_auto.unpixelated().pixel, Pixel::Normal);
+
+        // auto-content: `resolve` keeps the preset and carries a *fresh* probe's
+        // density; `resolved_for_output` then coarsens calm content but a busy
+        // (or absent, or stale-rule) probe reproduces the plain-auto floor.
+        use crate::content::ContentProbe;
+        let s_ac = Settings {
+            pixel: Some(Pixel::AutoContent),
+            content: Some(ContentProbe::current(10)),
+            ..Default::default()
+        };
+        let r_ac = ResolvedSettings::resolve(&s_ac, &cfg);
+        assert_eq!(r_ac.pixel, Pixel::AutoContent);
+        assert_eq!(r_ac.content_density, Some(10));
+        assert_eq!(r_ac.resolved_for_output((1920, 1080)).pixel, Pixel::B64); // calm → coarser
+        // a stale-rule probe is treated as absent (floor, == plain auto)
+        let s_stale = Settings {
+            pixel: Some(Pixel::AutoContent),
+            content: Some(ContentProbe {
+                rule: CONTENT_RULE_VERSION + 1,
+                density: 10,
+            }),
+            ..Default::default()
+        };
+        let r_stale = ResolvedSettings::resolve(&s_stale, &cfg);
+        assert_eq!(r_stale.content_density, None, "stale rule ignored");
+        assert_eq!(r_stale.resolved_for_output((1920, 1080)).pixel, Pixel::B16);
+        // a busy probe lands on the floor (== plain auto at this size)
+        let s_busy = Settings {
+            pixel: Some(Pixel::AutoContent),
+            content: Some(ContentProbe::current(123)),
+            ..Default::default()
+        };
+        assert_eq!(
+            ResolvedSettings::resolve(&s_busy, &cfg)
+                .resolved_for_output((1920, 1080))
+                .pixel,
+            Pixel::B16
+        );
+        // R6 wins over auto-content too: disabled ⇒ normal regardless of density
+        assert_eq!(r_ac.unpixelated().pixel, Pixel::Normal);
     }
 }

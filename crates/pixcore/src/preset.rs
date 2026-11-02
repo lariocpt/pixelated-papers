@@ -38,6 +38,16 @@ pub enum Pixel {
     /// before the variant cache key is built.
     #[serde(rename = "auto")]
     Auto,
+    /// Pick the preset from the output size **and** the picture's own
+    /// content: the size rule is a **floor** and a persisted content
+    /// measurement ([`crate::content`]) may only make blocks **coarser**
+    /// (a calm image loses nothing at big blocks; a busy one stays on the
+    /// floor exactly like `auto`). Like `auto`, it is **never rendered as
+    /// itself** — [`Pixel::resolve_content_for`] turns it into a concrete
+    /// preset (falling back to the size-only floor when no usable
+    /// measurement is stored), so `auto-content` never reaches a cache name.
+    #[serde(rename = "auto-content")]
+    AutoContent,
 }
 
 /// The auto-preset rule's block budget: the chosen preset keeps the
@@ -48,8 +58,9 @@ pub const AUTO_MAX_BLOCKS: u32 = 120;
 
 impl Pixel {
     /// Cycle order for the TUI `p` key: presets ascending, then `normal`,
-    /// then `auto` (the setting that picks a preset for you).
-    pub const ALL: [Pixel; 7] = [
+    /// then `auto` (picks a preset for you from the output size), then
+    /// `auto-content` (also reads the picture's own detail).
+    pub const ALL: [Pixel; 8] = [
         Pixel::B8,
         Pixel::B16,
         Pixel::B32,
@@ -57,6 +68,7 @@ impl Pixel {
         Pixel::B128,
         Pixel::Normal,
         Pixel::Auto,
+        Pixel::AutoContent,
     ];
 
     /// The concrete presets `auto` may resolve to (block size ascending).
@@ -64,10 +76,10 @@ impl Pixel {
 
     /// Block size in physical pixels (the one real parameter).
     ///
-    /// `Auto` is never rendered as itself — render paths call
-    /// [`Pixel::resolve_for`] first. The fallback value here is the
-    /// shipped default (16), so a missed resolve degrades to the default
-    /// look instead of panicking.
+    /// `Auto`/`AutoContent` are never rendered as themselves — render paths
+    /// call [`Pixel::resolve_for`] / [`Pixel::resolve_content_for`] first. The
+    /// fallback value here is the shipped default (16), so a missed resolve
+    /// degrades to the default look instead of panicking.
     pub fn block_px(self) -> u32 {
         match self {
             Pixel::B8 => 8,
@@ -77,12 +89,16 @@ impl Pixel {
             Pixel::B128 => 128,
             Pixel::Normal => 1,
             Pixel::Auto => 16,
+            Pixel::AutoContent => 16,
         }
     }
 
-    /// Resolve `auto` to a concrete preset for one output size; every
-    /// other preset (and `normal`) passes through unchanged, so this is
-    /// idempotent and safe to call on already-resolved settings.
+    /// Resolve `auto` (and the size-only **floor** of `auto-content`) to a
+    /// concrete preset for one output size; every other preset (and `normal`)
+    /// passes through unchanged, so this is idempotent and safe to call on
+    /// already-resolved settings. **It never returns `Auto` or `AutoContent`**
+    /// — that is the cache-name concreteness guarantee (a cache filename
+    /// always names a concrete preset).
     ///
     /// The rule (the plan's "consistent blocky look" intent, step-6 §6.4:
     /// bigger output ⇒ coarser pixel): the **smallest** preset from
@@ -94,7 +110,7 @@ impl Pixel {
     /// (not the source image), so the same wallpaper on two screens of
     /// different sizes can pick different presets.
     pub fn resolve_for(self, out: (u32, u32)) -> Pixel {
-        if self != Pixel::Auto {
+        if self != Pixel::Auto && self != Pixel::AutoContent {
             return self;
         }
         let long_edge = out.0.max(out.1).max(1);
@@ -105,6 +121,39 @@ impl Pixel {
             }
         }
         Pixel::B128
+    }
+
+    /// Resolve `auto-content` for one output size **and** the picture's
+    /// persisted content `density` (see [`crate::content`]); every other
+    /// preset (including plain `auto`) passes through [`Pixel::resolve_for`].
+    /// Like `resolve_for`, it **never returns `Auto` or `AutoContent`**.
+    ///
+    /// The combine rule: the size-only `auto` result is a **floor**. Content
+    /// may only push blocks **coarser** (bigger), never finer than the size
+    /// rule. So `final = max(content_preset(density), size_floor)` on block
+    /// size. A **missing or stale probe** (`None`) resolves to the floor —
+    /// byte-identical to plain `auto` — so a picture with no measurement
+    /// behaves exactly as before the feature existed. Busy pictures land on
+    /// the floor too (content wants finer than the floor ⇒ clamped up), which
+    /// is why `auto-content` reproduces plain `auto` on photographs and only
+    /// diverges on calm pictures (gradients, large solid regions), which get
+    /// coarser blocks with no visible loss.
+    pub fn resolve_content_for(self, out: (u32, u32), density: Option<u32>) -> Pixel {
+        if self != Pixel::AutoContent {
+            return self.resolve_for(out);
+        }
+        let floor = Pixel::Auto.resolve_for(out);
+        match density {
+            Some(d) => {
+                let want = content_preset(d);
+                if want.block_px() > floor.block_px() {
+                    want
+                } else {
+                    floor
+                }
+            }
+            None => floor,
+        }
     }
 
     /// Identity pixelation: no downscale, no quantize.
@@ -118,6 +167,33 @@ impl Pixel {
     }
 }
 
+/// Map a persisted content `density` ([`crate::content`]: mean absolute
+/// neighbour gradient, scaled ×16, measured at `ANALYSIS_EDGE = 512`) to a
+/// concrete preset for `auto-content`.
+///
+/// **More detail ⇒ finer blocks** (fine blocks preserve texture); **less
+/// detail ⇒ coarser blocks** (a calm image — gradients, large solid regions —
+/// loses nothing at big blocks). The thresholds are calibrated on the
+/// production statistic over real fixtures (busy photographs / pixel-art read
+/// ~80–190 → B8/B16 and land on the size floor; a UI strip reads ~24 → B32;
+/// calm photographs and flat vector graphics read ~10 → B64; smooth gradients
+/// read <8 → B128). [`Pixel::resolve_content_for`] clamps this against the
+/// size floor, so a busy image that maps finer than the floor stays exactly on
+/// the floor like plain `auto`.
+pub fn content_preset(density: u32) -> Pixel {
+    if density >= 64 {
+        Pixel::B8 // dense texture / pixel-art detail
+    } else if density >= 32 {
+        Pixel::B16
+    } else if density >= 16 {
+        Pixel::B32
+    } else if density >= 8 {
+        Pixel::B64 // calm photographs, flat graphics
+    } else {
+        Pixel::B128 // smooth gradients, large solids
+    }
+}
+
 impl fmt::Display for Pixel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
@@ -128,6 +204,7 @@ impl fmt::Display for Pixel {
             Pixel::B128 => "128",
             Pixel::Normal => "normal",
             Pixel::Auto => "auto",
+            Pixel::AutoContent => "auto-content",
         };
         f.write_str(s)
     }
@@ -137,6 +214,11 @@ impl FromStr for Pixel {
     type Err = PixError;
     fn from_str(s: &str) -> Result<Self> {
         let t = s.trim().to_ascii_lowercase();
+        // The content-auto family has its own spellings (a multi-word token,
+        // so match it before the "8bit"/"8b" era stripping below).
+        if matches!(t.as_str(), "auto-content" | "auto content" | "content") {
+            return Ok(Pixel::AutoContent);
+        }
         // Accept the era flavor: "8", "8bit", "8-bit", "8b", "normal".
         let core = t
             .strip_suffix("bit")
@@ -152,7 +234,7 @@ impl FromStr for Pixel {
             "normal" => Ok(Pixel::Normal),
             "auto" | "automatic" | "a" => Ok(Pixel::Auto),
             _ => Err(PixError::Invalid(format!(
-                "pixel size must be 8|16|32|64|128|normal|auto (got {s:?})"
+                "pixel size must be 8|16|32|64|128|normal|auto|auto-content (got {s:?})"
             ))),
         }
     }
@@ -180,6 +262,10 @@ mod tests {
             ("16-bit", Pixel::B16),
             (" 8 ", Pixel::B8),
             ("16BIT", Pixel::B16),
+            ("auto-content", Pixel::AutoContent),
+            ("auto content", Pixel::AutoContent),
+            ("AUTO-CONTENT", Pixel::AutoContent),
+            ("content", Pixel::AutoContent),
         ] {
             assert_eq!(s.parse::<Pixel>().unwrap(), want, "parse {s}");
         }
@@ -193,10 +279,12 @@ mod tests {
         assert_eq!(Pixel::B16.to_string(), "16");
         assert_eq!(Pixel::Normal.to_string(), "normal");
         assert_eq!(Pixel::Auto.to_string(), "auto");
+        assert_eq!(Pixel::AutoContent.to_string(), "auto-content");
         let blocks: Vec<u32> = Pixel::ALL.iter().map(|p| p.block_px()).collect();
-        // `auto`'s block_px is the defensive fallback (16), never used on
-        // a render path — resolve_for runs first.
-        assert_eq!(blocks, vec![8, 16, 32, 64, 128, 1, 16]);
+        // `auto`/`auto-content`'s block_px is the defensive fallback (16),
+        // never used on a render path — resolve_for/resolve_content_for run
+        // first.
+        assert_eq!(blocks, vec![8, 16, 32, 64, 128, 1, 16, 16]);
     }
 
     #[test]
@@ -211,6 +299,13 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Pixel>("\"auto\"").unwrap(),
             Pixel::Auto
+        );
+        // `auto-content` is a distinct token (manifest + config spelling).
+        let j = serde_json::to_string(&Pixel::AutoContent).unwrap();
+        assert_eq!(j, "\"auto-content\"");
+        assert_eq!(
+            serde_json::from_str::<Pixel>("\"auto-content\"").unwrap(),
+            Pixel::AutoContent
         );
     }
 
@@ -245,8 +340,16 @@ mod tests {
         for p in Pixel::ALL {
             for out in [(640, 360), (1920, 1080), (7680, 4320)] {
                 let r = p.resolve_for(out);
-                if p == Pixel::Auto {
+                if p == Pixel::Auto || p == Pixel::AutoContent {
+                    // Both auto variants resolve to a concrete preset here;
+                    // `auto-content`'s size floor must never leak either
+                    // `Auto` nor `AutoContent` (the cache-name guarantee).
                     assert_ne!(r, Pixel::Auto, "auto must never stay auto");
+                    assert_ne!(
+                        r,
+                        Pixel::AutoContent,
+                        "auto-content must never stay auto-content"
+                    );
                     assert_ne!(r, Pixel::Normal, "auto never picks normal");
                     // idempotent: resolving the resolved value is a no-op
                     assert_eq!(r.resolve_for(out), r);
@@ -254,6 +357,73 @@ mod tests {
                     assert_eq!(r, p, "{p} must pass through");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn auto_content_never_leaks_and_matches_auto_without_a_probe() {
+        // With no usable probe (None) every output resolves `auto-content`
+        // to exactly the size-only floor ⇒ byte-identical to plain `auto`.
+        for out in [(640, 360), (1920, 1080), (3840, 2160), (100, 100)] {
+            let via_content = Pixel::AutoContent.resolve_content_for(out, None);
+            assert_eq!(
+                via_content,
+                Pixel::Auto.resolve_for(out),
+                "no-probe auto-content must equal plain auto at {out:?}"
+            );
+            assert_ne!(via_content, Pixel::AutoContent);
+            assert_ne!(via_content, Pixel::Auto);
+            // Concrete presets ignore density entirely.
+            assert_eq!(Pixel::B64.resolve_content_for(out, Some(189)), Pixel::B64);
+            assert_eq!(
+                Pixel::Auto.resolve_content_for(out, Some(189)),
+                Pixel::Auto.resolve_for(out)
+            );
+        }
+    }
+
+    #[test]
+    fn auto_content_floor_is_coarser_only() {
+        // 1080p size floor is B16 (block 16).
+        let out = (1920, 1080);
+        assert_eq!(Pixel::Auto.resolve_for(out), Pixel::B16);
+        // A busy picture (high density) maps finer than the floor ⇒ clamped
+        // back to the floor (16), reproducing plain `auto`.
+        for busy in [32, 64, 83, 123, 4080] {
+            assert_eq!(
+                Pixel::AutoContent.resolve_content_for(out, Some(busy)),
+                Pixel::B16,
+                "busy density {busy} stays on the 1080p floor"
+            );
+        }
+        // A calm picture maps coarser and that coarse value wins (content may
+        // only push coarser, never finer).
+        assert_eq!(
+            Pixel::AutoContent.resolve_content_for(out, Some(10)),
+            Pixel::B64
+        );
+        assert_eq!(
+            Pixel::AutoContent.resolve_content_for(out, Some(24)),
+            Pixel::B32
+        );
+        assert_eq!(
+            Pixel::AutoContent.resolve_content_for(out, Some(4)),
+            Pixel::B128
+        );
+        // content_preset ordering: more density never yields a bigger block.
+        let mut prev = content_preset(0).block_px();
+        for d in [8, 16, 32, 64, 120, 4080] {
+            let b = content_preset(d).block_px();
+            assert!(b <= prev, "non-monotone content rule at density {d}");
+            prev = b;
+        }
+        // The result is concrete for every density: auto-content never leaks.
+        for d in 0..300 {
+            let r = Pixel::AutoContent.resolve_content_for(out, Some(d));
+            assert!(!matches!(
+                r,
+                Pixel::Auto | Pixel::AutoContent | Pixel::Normal
+            ));
         }
     }
 

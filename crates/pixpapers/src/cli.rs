@@ -37,7 +37,8 @@ enum Cmd {
     Remove { id: String },
     /// Apply a wallpaper now (starts the daemon if needed)
     Set { id: String },
-    /// Set the pixel look for one wallpaper: 8|16|32|64|128|normal|auto
+    /// Set the pixel look for one wallpaper:
+    /// 8|16|32|64|128|normal|auto|auto-content
     Pixel { id: String, pixel: Pixel },
     /// Set placement for one wallpaper: fit|cover-gutter|cover-crop|stretch
     Placement { id: String, placement: Placement },
@@ -86,7 +87,9 @@ enum Cmd {
         id: String,
         size: String,
         /// Pixel preset for this render only (not persisted); `auto`
-        /// picks from the output size
+        /// picks from the output size, `auto-content` also reads the
+        /// persisted content measurement (falling back to the size floor
+        /// when the entry has none)
         #[arg(long)]
         pixel: Option<Pixel>,
         #[arg(long)]
@@ -132,11 +135,23 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum DefaultWhat {
-    Pixel { pixel: Pixel },
-    Placement { placement: Placement },
-    Palette { palette: PaletteMode },
-    Dither { dither: Dither },
-    GutterStyle { style: GutterStyle },
+    /// Default look for new / unset entries:
+    /// 8|16|32|64|128|normal|auto|auto-content
+    Pixel {
+        pixel: Pixel,
+    },
+    Placement {
+        placement: Placement,
+    },
+    Palette {
+        palette: PaletteMode,
+    },
+    Dither {
+        dither: Dither,
+    },
+    GutterStyle {
+        style: GutterStyle,
+    },
 }
 
 #[derive(Subcommand)]
@@ -170,8 +185,21 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
             println!("set {} · {} ({})", entry.id, entry.title, state_line(paths));
         }
         Cmd::Pixel { id, pixel } => {
-            let (e, cur) = commands::edit_entry(paths, &id, |s| s.pixel = Some(pixel))?;
-            println!("{} → pixel {pixel}{}", e.id, changed_note(cur));
+            let (e, cur) = commands::set_pixel(paths, &id, pixel)?;
+            let probe_note = match (pixel, e.settings.content) {
+                (Pixel::AutoContent, Some(p)) => {
+                    let target = pixcore::preset::content_preset(p.density);
+                    format!(" (detail {} → {target} on a big display)", p.density)
+                }
+                (Pixel::AutoContent, None) => " (no readable original → size floor)".into(),
+                _ => String::new(),
+            };
+            println!(
+                "{} → pixel {pixel}{}{}",
+                e.id,
+                probe_note,
+                changed_note(cur)
+            );
             if cur {
                 apply_now(paths);
             }
@@ -295,6 +323,7 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
                 palette,
                 dither,
                 gutter_style,
+                content: None,
             };
             commands::export(paths, cfg, &id, &overrides, (w, h), out.as_deref())?;
         }

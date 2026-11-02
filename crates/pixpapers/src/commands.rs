@@ -6,8 +6,8 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use pixcore::{
-    Config, Dither, Entry, GutterStyle, Library, PaletteMode, Paths, Pixel, Placement,
-    ResolvedSettings, Settings,
+    Config, ContentProbe, Dither, Entry, GutterStyle, Library, PaletteMode, Paths, Pixel,
+    Placement, ResolvedSettings, Settings,
 };
 
 /// A user-condition error: a bad id, an empty library, an unparseable
@@ -69,7 +69,7 @@ pub fn add(paths: &Paths, cfg: &Config, source: &Path, title: Option<String>) ->
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "wallpaper".into())
     });
-    let entry = Entry {
+    let mut entry = Entry {
         id: id.clone(),
         title,
         hash,
@@ -86,6 +86,12 @@ pub fn add(paths: &Paths, cfg: &Config, source: &Path, title: Option<String>) ->
     std::fs::create_dir_all(&entry_dir).map_err(|e| pixcore::PixError::io(&entry_dir, e))?;
     let orig = entry_dir.join(format!("original.{}", opt.ext));
     std::fs::write(&orig, &opt.bytes).map_err(|e| pixcore::PixError::io(&orig, e))?;
+    // If the entry will *inherit* `auto-content`, measure the stored original
+    // once here so the render side has a density to read (the analysis is of
+    // the optimized bytes — exactly what the daemon renders from).
+    if cfg.default_pixel == Pixel::AutoContent {
+        entry.settings.content = pixcore::content::analyze_file(&orig).ok();
+    }
     lib.entries.push(entry.clone());
     lib.save(paths).context("save manifest")?;
     println!(
@@ -152,6 +158,41 @@ pub fn edit_entry(paths: &Paths, id: &str, f: impl FnOnce(&mut Settings)) -> Res
     let entry = lib.entries[idx].clone();
     lib.save(paths).context("save manifest")?;
     Ok((entry, was_current))
+}
+
+/// `pixpapers pixel <id> <preset>`: set one entry's pixel look and keep the
+/// persisted content probe consistent with it. Choosing `auto-content`
+/// analyses the stored original **once** here on the CLI/state side (the
+/// daemon never re-analyses) and stores the measurement next to the setting;
+/// switching to any other look clears a stale probe so nothing dangles. An
+/// undecodable/missing original leaves `content: None`, the documented
+/// size-floor fallback (== plain `auto`).
+pub fn set_pixel(paths: &Paths, id: &str, pixel: Pixel) -> Result<(Entry, bool)> {
+    let mut lib = Library::load(paths).context("load library")?;
+    let idx = lib
+        .find_index(id)
+        .ok_or_else(|| UserError(format!("no entry matching {id:?} (see `pixpapers list`)")))?;
+    let entry = &mut lib.entries[idx];
+    entry.settings.pixel = Some(pixel);
+    entry.settings.content = if pixel == Pixel::AutoContent {
+        content_probe_for(paths, &entry.id)
+    } else {
+        None
+    };
+    let was_current = lib.current.as_deref() == Some(entry.id.as_str());
+    let out = entry.clone();
+    lib.save(paths).context("save manifest")?;
+    Ok((out, was_current))
+}
+
+/// Analyse an entry's stored original into a content probe (see
+/// [`pixcore::content`]). Returns `None` (never an error) when the original is
+/// missing or undecodable, so callers treat "no probe" as the documented
+/// size-floor fallback rather than a failed command. This is the *only* place
+/// the picture is analysed — always on the state side, never in the daemon.
+pub fn content_probe_for(paths: &Paths, id: &str) -> Option<ContentProbe> {
+    let path = pixcore::variant::original_path(paths, id).ok()?;
+    pixcore::content::analyze_file(&path).ok()
 }
 
 /// Record the current wallpaper (the daemon picks it up live or on start).
@@ -224,7 +265,36 @@ pub fn set_enabled(paths: &Paths, cfg: &mut Config, on: bool) -> Result<()> {
 pub fn set_default_pixel(paths: &Paths, cfg: &mut Config, p: Pixel) -> Result<()> {
     cfg.default_pixel = p;
     cfg.save(&paths.config_file).context("save config")?;
+    // When the default becomes `auto-content`, the entries that *inherit* it
+    // (no per-entry pixel) need a content probe now — the daemon reads a
+    // persisted density, it never analyses. Entries with their own explicit
+    // look are left untouched (their probe is unaffected by the default).
+    if p == Pixel::AutoContent {
+        backfill_inherited_probes(paths)?;
+    }
     println!("default look: {p}");
+    Ok(())
+}
+
+/// Compute content probes for every entry that inherits the default pixel
+/// (its own `pixel` is unset). Called when the default switches to
+/// `auto-content` so those entries carry a fresh density. A missing/undecodable
+/// original simply leaves that entry without a probe (size-floor fallback).
+/// One manifest write only if anything actually gained a probe.
+fn backfill_inherited_probes(paths: &Paths) -> Result<()> {
+    let mut lib = Library::load(paths).context("load library")?;
+    let mut changed = false;
+    for e in &mut lib.entries {
+        if e.settings.pixel.is_none() && e.settings.content.is_none() {
+            if let Some(probe) = content_probe_for(paths, &e.id) {
+                e.settings.content = Some(probe);
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        lib.save(paths).context("save manifest")?;
+    }
     Ok(())
 }
 
@@ -331,12 +401,17 @@ pub fn export(
         },
         cfg,
     );
-    // An `auto` pixel resolves against the requested output size — the
-    // same pure rule the daemon applies per output — so the exported file
-    // (name, bytes and the line below) names the concrete preset used.
+    // An `auto` / `auto-content` pixel resolves against the requested output
+    // size — `auto` by the pure size rule, `auto-content` by the persisted
+    // density clamped to that size floor (no re-analysis of the picture).
+    // Either way the exported file (name, bytes and the line below) names the
+    // concrete preset used.
+    let content_requested = resolved.pixel == Pixel::AutoContent;
     let auto_requested = resolved.pixel == Pixel::Auto;
     let resolved = resolved.resolved_for_output(out);
-    let pixel_token = if auto_requested {
+    let pixel_token = if content_requested {
+        format!("auto-content→{}", resolved.pixel)
+    } else if auto_requested {
         format!("auto→{}", resolved.pixel)
     } else {
         resolved.pixel.to_string()
@@ -384,6 +459,10 @@ fn merge_settings(base: &Settings, over: &Settings) -> Settings {
         palette: over.palette.or(base.palette),
         dither: over.dither.or(base.dither),
         gutter_style: over.gutter_style.or(base.gutter_style),
+        // The content probe travels with the entry (the CLI's `--pixel` flag
+        // never carries one): export must resolve `auto-content` from the
+        // measurement the entry already stores, never re-analyse the picture.
+        content: over.content.or(base.content),
     }
 }
 

@@ -72,6 +72,7 @@ fn row(orig: &RgbaImage, orig_png: usize, out: (u32, u32), preset: &str, label: 
         palette: PaletteMode::Auto,
         dither: Dither::None,
         gutter_style: pixcore::GutterStyle::Solid,
+        content_density: None,
     };
     let canvas = pixcore::variant::generate_from_image(orig, &s, out);
     let bytes = pixcore::variant::encode_variant(&canvas, PaletteMode::Auto).len();

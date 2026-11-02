@@ -8,6 +8,7 @@
 pub mod bar;
 pub mod color;
 pub mod config;
+pub mod content;
 pub mod error;
 pub mod gutter;
 pub mod manifest;
@@ -28,6 +29,7 @@ pub use color::RgbCss;
 pub use config::BackendChoice;
 pub use config::Config;
 pub use config::Slideshow;
+pub use content::ContentProbe;
 pub use error::PixError;
 pub use gutter::GutterStyle;
 pub use manifest::{Entry, Library, Settings};

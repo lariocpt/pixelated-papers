@@ -880,6 +880,349 @@ fn export_pixel_auto_resolves_to_concrete_bytes() {
     );
 }
 
+// ── content-based auto-preset (`auto-content`) ────────────────────────────
+//
+// The combine rule is `content may only push COARSER` on top of the by-size
+// `auto` floor, and the picture is measured once on the CLI/state side (the
+// daemon never re-analyses). These integration tests drive the real CLI in a
+// hermetic home and pin the four contracts that matter:
+//   * `auto-content` persists a probe and every cache filename / `wrote` line
+//     names a CONCRETE preset (the token never leaks into a cache name);
+//   * the exported bytes are identical to an explicit `--pixel <resolved>`
+//     export (the persisted probe + resolver + renderer agree end to end);
+//   * a busy image's `auto-content` is byte-identical to plain `auto` (content
+//     can never refine below the floor); a flat image's is strictly COARSER;
+//   * the analysis is deterministic and the probe round-trips through the
+//     manifest, the default, and a plain `add`.
+//
+// Deliberately threshold-free: the expected concrete preset is derived with
+// the *same public resolver the code uses*, so these assert consistency
+// across the CLI/manifest/renderer rather than hard-coding a density cut.
+
+/// A busy source: an 8px checkerboard of two strongly-different colours. Its
+/// neighbour-gradient density sits at the top of the scale, so the content
+/// preset is the finest one — `auto-content` can therefore only ever be held
+/// at the size floor.
+fn busy_source(root: &Path) -> PathBuf {
+    let (w, h) = (320u32, 180u32);
+    let mut img = image::RgbaImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            let on = ((x / 8) + (y / 8)) % 2 == 0;
+            let px = if on {
+                image::Rgba([18, 24, 224, 255])
+            } else {
+                image::Rgba([242, 238, 46, 255])
+            };
+            img.put_pixel(x, y, px);
+        }
+    }
+    let p = root.join("busy-checker.png");
+    img.save(&p).unwrap();
+    p
+}
+
+/// A flat source: one very slow horizontal ramp. Downscaled to the analysis
+/// edge its neighbour gradients average near zero (a coarse content preset),
+/// so `auto-content` pushes COARSER than the by-size floor at a big output.
+fn flat_source(root: &Path) -> PathBuf {
+    let (w, h) = (1600u32, 900u32);
+    let mut img = image::RgbaImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            let v = ((x as f64 / (w - 1) as f64) * 255.0).round() as u8;
+            img.put_pixel(x, y, image::Rgba([v, v, v, 255]));
+        }
+    }
+    let p = root.join("flat-ramp.png");
+    img.save(&p).unwrap();
+    p
+}
+
+/// `(rule, density)` of the first entry's persisted content probe, or `None`
+/// when it has none (a plain add, a non-content pixel, an old manifest).
+fn stored_content(home: &Home) -> Option<(u32, u32)> {
+    let v: serde_json::Value = serde_json::from_str(&home.manifest_text()).unwrap();
+    let c = &v["entries"][0]["settings"]["content"];
+    if c.is_null() {
+        None
+    } else {
+        Some((
+            c["rule"].as_u64().unwrap() as u32,
+            c["density"].as_u64().unwrap() as u32,
+        ))
+    }
+}
+
+/// The concrete preset the `wrote` line reports after an `auto→N` or
+/// `auto-content→N` token (whatever follows the first `→`, up to the first
+/// non-digit).
+fn preset_after_arrow(line: &str) -> pixcore::Pixel {
+    let after = line
+        .split('→')
+        .nth(1)
+        .unwrap_or_else(|| panic!("no resolved preset in wrote line: {line}"));
+    let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits
+        .parse()
+        .unwrap_or_else(|_| panic!("bad preset {digits:?} in wrote line: {line}"))
+}
+
+#[test]
+fn auto_content_persists_probe_and_names_concrete_preset() {
+    if skip_without_cli_binary() {
+        return;
+    }
+    let home = Home::new();
+    let src = flat_source(&home.root);
+    let (code, out, err) = home.cli(&["add", src.to_str().unwrap(), "--title", "flat"]);
+    assert_eq!(code, 0, "add failed:\n{out}\n{err}");
+    let id = home.entry_id(0);
+    assert_eq!(
+        stored_content(&home),
+        None,
+        "a plain add under a non-content default must not analyse the picture"
+    );
+
+    let (code, out, err) = home.cli(&["pixel", id.as_str(), "auto-content"]);
+    assert_eq!(code, 0, "pixel failed:\n{out}\n{err}");
+    assert!(
+        out.contains("auto-content"),
+        "line must name the preset: {out}"
+    );
+    let (rule, density) = stored_content(&home).expect("auto-content persists a probe");
+    assert_eq!(
+        rule,
+        pixcore::content::CONTENT_RULE_VERSION,
+        "stale rule written"
+    );
+    // the manifest stores the token, never a bare leaked `auto`.
+    let v: serde_json::Value = serde_json::from_str(&home.manifest_text()).unwrap();
+    assert_eq!(
+        v["entries"][0]["settings"]["pixel"].as_str(),
+        Some("auto-content")
+    );
+
+    let (w, h) = (1920u32, 1080u32);
+    // The concrete preset the persisted density resolves to at this size.
+    let expected = pixcore::Pixel::AutoContent.resolve_content_for((w, h), Some(density));
+    let dest = home.root.join("ac.png");
+    let (code, out, err) = home.cli(&[
+        "export",
+        id.as_str(),
+        "1920x1080",
+        "--out",
+        dest.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "export failed:\n{out}\n{err}");
+    assert!(
+        out.contains(&format!("auto-content→{expected}")),
+        "wrote line must show the resolution: {out}"
+    );
+
+    // cmp-identical to an explicit concrete export of that preset.
+    let pinned = home.root.join("pin.png");
+    let (code, out, err) = home.cli(&[
+        "export",
+        id.as_str(),
+        "1920x1080",
+        "--pixel",
+        &expected.to_string(),
+        "--out",
+        pinned.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "explicit export failed:\n{out}\n{err}");
+    assert_eq!(
+        std::fs::read(&dest).unwrap(),
+        std::fs::read(&pinned).unwrap(),
+        "auto-content must export the exact bytes of the concrete preset it resolved to"
+    );
+
+    // every cache filename names the concrete preset, never the token. The
+    // pixel is the segment right after the `v2-` pipeline prefix — `auto` is
+    // also a legitimate *palette* token, so only a leak in the pixel slot
+    // counts (`auto`/`auto-content` both start with `auto`).
+    let names: Vec<String> = std::fs::read_dir(home.paths.variants_dir(&id))
+        .unwrap()
+        .map(|f| f.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        names.iter().any(|n| n.contains(&format!("-{expected}-"))),
+        "variant not cached under the concrete preset: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n.starts_with("v2-auto")),
+        "auto/auto-content leaked into a cache filename's pixel slot: {names:?}"
+    );
+}
+
+#[test]
+fn busy_image_auto_content_holds_at_the_size_floor() {
+    if skip_without_cli_binary() {
+        return;
+    }
+    let home = Home::new();
+    let src = busy_source(&home.root);
+    let (code, _, err) = home.cli(&["add", src.to_str().unwrap(), "--title", "busy"]);
+    assert_eq!(code, 0, "add failed: {err}");
+    let id = home.entry_id(0);
+    let (code, _, err) = home.cli(&["pixel", id.as_str(), "auto-content"]);
+    assert_eq!(code, 0, "pixel failed: {err}");
+
+    // The busiest content resolves to the finest preset, so it can be neither
+    // coarser than the floor by choice nor finer than the floor by rule — it
+    // lands on exactly what plain `auto` picks at the same size.
+    let ac = home.root.join("busy-ac.png");
+    let au = home.root.join("busy-auto.png");
+    let (code, out_ac, err) = home.cli(&[
+        "export",
+        id.as_str(),
+        "1280x720",
+        "--out",
+        ac.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "auto-content export failed: {err}");
+    assert!(out_ac.contains("auto-content→"), "token missing: {out_ac}");
+    let (code, out_au, err) = home.cli(&[
+        "export",
+        id.as_str(),
+        "1280x720",
+        "--pixel",
+        "auto",
+        "--out",
+        au.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "auto export failed: {err}");
+    assert!(out_au.contains("auto→"), "token missing: {out_au}");
+    assert_eq!(
+        preset_after_arrow(&out_ac),
+        preset_after_arrow(&out_au),
+        "busy content must hold at the size floor"
+    );
+    assert_eq!(
+        std::fs::read(&ac).unwrap(),
+        std::fs::read(&au).unwrap(),
+        "busy auto-content is byte-identical to plain auto"
+    );
+}
+
+#[test]
+fn flat_image_auto_content_pushes_coarser_than_the_floor() {
+    if skip_without_cli_binary() {
+        return;
+    }
+    let home = Home::new();
+    let src = flat_source(&home.root);
+    let (code, _, err) = home.cli(&["add", src.to_str().unwrap(), "--title", "flat"]);
+    assert_eq!(code, 0, "add failed: {err}");
+    let id = home.entry_id(0);
+    let (code, _, err) = home.cli(&["pixel", id.as_str(), "auto-content"]);
+    assert_eq!(code, 0, "pixel failed: {err}");
+
+    let ac = home.root.join("flat-ac.png");
+    let au = home.root.join("flat-auto.png");
+    let (code, out_ac, err) = home.cli(&[
+        "export",
+        id.as_str(),
+        "1920x1080",
+        "--out",
+        ac.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "auto-content export failed: {err}");
+    let (code, out_au, err) = home.cli(&[
+        "export",
+        id.as_str(),
+        "1920x1080",
+        "--pixel",
+        "auto",
+        "--out",
+        au.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "auto export failed: {err}");
+    let ac_p = preset_after_arrow(&out_ac);
+    let au_p = preset_after_arrow(&out_au);
+    assert!(
+        ac_p.block_px() > au_p.block_px(),
+        "flat content must be coarser than the size floor: content {ac_p} ({}px) vs floor {au_p} ({}px)",
+        ac_p.block_px(),
+        au_p.block_px()
+    );
+    assert_ne!(
+        std::fs::read(&ac).unwrap(),
+        std::fs::read(&au).unwrap(),
+        "a coarser content preset must render different bytes"
+    );
+}
+
+#[test]
+fn auto_content_analysis_is_deterministic_and_round_trips() {
+    if skip_without_cli_binary() {
+        return;
+    }
+    let home = Home::new();
+    let src = flat_source(&home.root);
+    home.cli(&["add", src.to_str().unwrap(), "--title", "flat"]);
+    let id = home.entry_id(0);
+    home.cli(&["pixel", id.as_str(), "auto-content"]);
+    let first = stored_content(&home).expect("probe after auto-content").1;
+
+    // switching to a concrete look clears the probe, and re-choosing
+    // auto-content re-measures the same stored original to the same number.
+    let (code, _, err) = home.cli(&["pixel", id.as_str(), "32"]);
+    assert_eq!(code, 0, "pixel 32 failed: {err}");
+    assert_eq!(
+        stored_content(&home),
+        None,
+        "choosing a non-content preset must clear a stale probe"
+    );
+    home.cli(&["pixel", id.as_str(), "auto-content"]);
+    let again = stored_content(&home)
+        .expect("probe after re-auto-content")
+        .1;
+    assert_eq!(
+        first, again,
+        "same stored bytes + same rule version must yield the same density"
+    );
+}
+
+#[test]
+fn default_auto_content_probes_inheriting_and_new_entries() {
+    if skip_without_cli_binary() {
+        return;
+    }
+    let home = Home::new();
+    // an entry added while the default is a concrete preset carries no probe…
+    let a = home.small_source();
+    let (code, out, err) = home.cli(&["add", a.to_str().unwrap(), "--title", "a"]);
+    assert_eq!(code, 0, "add a failed:\n{out}\n{err}");
+    assert_eq!(stored_content(&home), None, "concrete default → no probe");
+
+    // …flipping the default to auto-content backfills the inheriting entry…
+    let (code, out, err) = home.cli(&["default", "pixel", "auto-content"]);
+    assert_eq!(code, 0, "default failed:\n{out}\n{err}");
+    assert!(out.contains("auto-content"), "default line: {out}");
+    assert!(
+        stored_content(&home).is_some(),
+        "the inheriting entry must gain a probe when the default becomes auto-content"
+    );
+
+    // …and a fresh add under the auto-content default is measured at add time.
+    let b = home.root.join("b.png");
+    let img = image::RgbaImage::from_pixel(16, 16, image::Rgba([200, 10, 10, 255]));
+    img.save(&b).unwrap();
+    let (code, out, err) = home.cli(&["add", b.to_str().unwrap(), "--title", "b"]);
+    assert_eq!(code, 0, "add b failed:\n{out}\n{err}");
+    let v: serde_json::Value = serde_json::from_str(&home.manifest_text()).unwrap();
+    assert!(
+        !v["entries"][0]["settings"]["content"].is_null(),
+        "backfilled entry lost its probe"
+    );
+    assert!(
+        !v["entries"][1]["settings"]["content"].is_null(),
+        "a new entry added under an auto-content default must carry a probe"
+    );
+}
+
 /// The fixture [`fixture`] falls back to (`tests/fixtures/fixture.png`) is
 /// the one shipped inside the published crate, where the repo-level
 /// `test/fixture.png` does not exist. This guard keeps the two

@@ -24,6 +24,9 @@ pub fn local_report(paths: &Paths, cfg: &Config) -> StatusReport {
         // the enabled flag still reflects the config the user set.
         slideshow_enabled: Some(cfg.slideshow.enabled),
         next_change: None,
+        // Without a daemon there is no output size to resolve `auto` /
+        // `auto-content` against, so the concrete-preset detail stays absent.
+        current_auto_detail: None,
     }
 }
 
@@ -74,6 +77,11 @@ pub fn print_report(r: &StatusReport, cfg: &Config, json: bool) {
         cfg.dither
     );
     println!("current:  {}", r.current.as_deref().unwrap_or("(none)"));
+    // When the current wallpaper resolves an `auto`/`auto-content` pixel, name
+    // the concrete preset the daemon renders (only present with a live daemon).
+    if let Some(d) = &r.current_auto_detail {
+        println!("  look:     {d}");
+    }
     if r.slideshow_enabled == Some(true) {
         // Only shown when the user turned the slideshow on, so the default
         // (off) status output is unchanged.

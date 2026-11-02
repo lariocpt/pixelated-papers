@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::MANIFEST_VERSION;
 use crate::RgbCss;
 use crate::config::write_atomic;
+use crate::content::ContentProbe;
 use crate::error::{PixError, Result};
 use crate::gutter::GutterStyle;
 use crate::palette::{Dither, PaletteMode};
@@ -33,6 +34,15 @@ pub struct Settings {
     /// `cover-gutter`). `None` ⇒ inherit `default_gutter_style`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gutter_style: Option<GutterStyle>,
+    /// The persisted content measurement that backs `auto-content` (see
+    /// [`crate::content`]). Written once on the CLI/state side when the
+    /// preset is chosen (and refreshed when inheriting a new `auto-content`
+    /// default), never by the daemon. `None` for every picture that doesn't
+    /// use `auto-content`, so old manifests round-trip untouched. A stale
+    /// [`ContentProbe::rule`] is ignored at resolve time (see
+    /// [`crate::render::ResolvedSettings::content_density`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<ContentProbe>,
 }
 
 /// One library entry. The **original** lives on disk at
