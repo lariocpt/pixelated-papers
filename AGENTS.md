@@ -19,11 +19,13 @@ WAYLAND_DISPLAY=wayland-1 test/verify-waybar.sh
 WAYLAND_DISPLAY=wayland-1 test/bench-daemon.sh target/release/pixpapers 25
 ```
 
-Tests: 108 pixcore (config atomicity + legacy palette bool, manifest
+Tests: 116 pixcore (config atomicity + legacy palette bool, manifest
 version guard + palette/dither knobs, placement proptests + short tokens,
 bar-label goldens, quantize goldens + v0.1 byte-identity goldens
 (presets and `normal`), versioned variant cache, preview canvas/guard,
-sixel encoder, auto-preset rule (proptest) + cache-name concreteness, and
+sixel encoder, auto-preset rule (proptest) + cache-name concreteness, the
+content statistic + content-preset combine rule (determinism, floor-is-a-floor,
+aliasing-is-the-documented-limitation, downscale-still-discriminates), and
 the slideshow time-model (`active_index`/`secs_to_next_change`/`active_entry`,
 fake clock — no sleeps). The daemon's IPC/loop logic runs against
 in-process harnesses — headless is normal. `crates/pixpapers/tests/slideshow.rs`
@@ -101,13 +103,16 @@ the same change.
 
 ## Deferred by decision, not by omission
 
-auto-preset **by image content** (the shipped `auto` preset
-picks from the output size only — the picture itself is never analysed),
-MPRIS-ish hooks, exact fractional buffers, headless-sway CI. Don't
+Still deferred: MPRIS-ish hooks, exact fractional buffers, headless-sway
+CI. Don't
 "helpfully" implement these without asking; they're v0.2+ scoped on
 purpose. (The blurred-bleed gutter shipped at 25f9a90 as `gutter-style
-bleed`; the by-output-size auto-preset shipped after it — both were on
-this list until they shipped. "Live wallpapers" shipped as a still-image
+bleed`; the by-output-size `auto` preset shipped after it; and auto-preset
+**by image content** shipped as the separate opt-in `auto-content` token —
+plain `auto` still picks from the output size only, and the picture is read
+only when you explicitly ask `auto-content`, and then once, on the CLI (the
+daemon never re-analyses). All three were on this list until they shipped.
+"Live wallpapers" shipped as a still-image
 **slideshow** (`pixpapers slideshow`, render-time clock model) — but
 **animated/video** wallpaper sources stay deliberately deferred: there is
 no video-decoder dependency, the slideshow only cycles still images.)

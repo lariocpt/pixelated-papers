@@ -1050,4 +1050,169 @@ feature is backward compatible.
 
 - `README.md` still lists "Native GUI" under a "Shipped in v0.2" heading —
   pre-existing drift (the GUI shipped after 0.2.1), left as-is rather than
-  rewritten during the release sweep.
+  rewritten during the release sweep. (Corrected after this release in the
+  `auto-content` change below: the heading now reads "Shipped since v0.2".)
+
+## Content-based auto-preset (2026-11-02, this change)
+
+`auto-content` — auto-preset **by image content**, landing under
+[Unreleased] with **no crate version bump** (additive, backward compatible).
+`auto` (size-only) is untouched byte-for-byte; content is a separate opt-in
+token.
+
+### The combine rule (pixcore, pure)
+
+`Pixel::AutoContent` → `resolve_content_for(out, density)`: resolve the same
+preset `auto` would from the output size (`floor = Auto.resolve_for(out)`),
+then `if content_preset(density).block_px() > floor.block_px() { content }
+else { floor }`. The size pick is a **floor** — content can only push
+**coarser**, never refine. A busy image resolves to the finest content preset
+(8) and is therefore clamped back to the floor, so it renders byte-identically
+to plain `auto`; a calm image resolves coarser than the floor and stays there.
+A **missing** or **stale-rule** probe (`None`, or `probe.rule != CONTENT_RULE_VERSION`)
+falls back to the floor, so such an entry is byte-identical to `auto`.
+`resolve_for` guards out both `Auto` and `AutoContent` (neither is a concrete
+size preset). Thresholds (calibrated + locked at the 512 px edge): density
+`≥64→8`, `≥32→16`, `≥16→32`, `≥8→64`, else `128`.
+
+### The statistic (integer-only ⇒ deterministic)
+
+`pixcore::content`: downscale the **colour** image to `ANALYSIS_EDGE = 512`
+(the long edge; never upscales) via `pipeline::downscale`, convert to Rec.601
+integer luma, and score the mean absolute horizontal + vertical neighbour
+gradient scaled ×16 (range `0..4080`). Persisted as a `{rule, density}`
+`ContentProbe` in `Settings.content` (`skip`-if-`none`). Same source bytes +
+same `CONTENT_RULE_VERSION` ⇒ same density ⇒ same preset (no floats, no
+threading dependence).
+
+### Per-image analysis cost — release build, throwaway bench, median of 15 (warm)
+
+Median wall time of `analyze_file` (the whole cost the CLI pays: PNG decode +
+downscale + gradient) and, isolated, `content_density` alone (downscale +
+gradient on a pre-decoded frame), across real fixtures including 4K:
+
+| fixture | size | density | `analyze_file` median | statistic-only median |
+|---|---|---|---|---|
+| `test/fixture.png` | 96×60 | 33 | **0.044 ms** | 0.014 ms |
+| `docs/img/source.png` (sunset) | 1600×900 (16-bit) | 11 | 12.49 ms | 3.50 ms |
+| busy 1080p (4 px checker) | 1920×1080 | 906 | 6.82 ms | 4.27 ms |
+| flat 1080p (ramp) | 1920×1080 | 4 | 5.49 ms | 4.31 ms |
+| busy 4K (4 px checker) | 3840×2160 | 38 | **30.14 ms** | 12.91 ms |
+| flat 4K (ramp) | 3840×2160 | 4 | 24.64 ms | 12.61 ms |
+
+Median across the set: **~9.7 ms** full `analyze_file`, **~4.3 ms** the
+statistic alone. `analyze_file` is dominated by the **PNG decode** (the CLI
+reads the file once anyway); the gradient statistic is bounded by the 512²
+edge (≤ ~13 ms even at 4K, because the downscale output is capped regardless of
+source size). The analysis runs **once, on the CLI**, at `pixel`/`default
+pixel`/`add` time — never on the daemon's render path — and is on the order of
+a **single cold render** (PERF.md: 1080p@16 ≈ 10.9 ms, 4K@8 ≈ 105 ms), so it is
+negligible in the interactive budget and happens off the hot path.
+
+### Combine-rule + cache evidence (release binary, hermetic `PIXPAPERS_HOME`)
+
+Real `export` renders of the two website sources at 1920×1080 (floor = 16):
+
+- **busy dot pattern** (`busy_photo.png`, detail 123) → `auto-content→16`:
+  `cmp`-identical to `--pixel 16` pinned by hand — content read a fine preset
+  (8) but the floor held. `detail 123 → 8 … (on a big display)` shown on the
+  set line; the export line names the concrete `16`.
+- **calm sunset** (`docs/img/source.png`, detail 11) → `auto-content→64`:
+  `cmp`-identical to `--pixel 64` pinned by hand — content **pushed coarser**
+  than the 16 that plain `auto` gives the same image at the same size.
+- variant cache names the concrete preset: only `v2-16-fit-1920x1080-auto.png`
+  and `v2-64-fit-1920x1080-auto.png` were written — **no `v2-auto-content`**
+  ever names a file (the trailing `-auto` is the palette token, not the pixel).
+- the missing/stale-probe fallback (`auto` on the same sunset) → `auto→16`,
+  byte-identical to the size floor.
+
+### Where it is computed / daemon purity
+
+The picture is measured once on the CLI/state side and *persisted* with the
+entry: `pixel <id> auto-content` (choosing any other preset clears the stale
+probe), `default pixel auto-content` (backfills every inheriting entry, and
+future `add`s), `add` **iff** the default pixel is `auto-content`. The daemon
+is a pure renderer: `render_into` only calls
+`s.pixel.resolve_content_for(out, s.content_density)` — it never decodes an
+image to re-measure it. `export --pixel auto-content` reads the persisted probe
+(render-only; with no probe it equals `auto`).
+
+### Aliasing — the documented limitation (measured, tested)
+
+A **full-frame pattern whose features rescale with the frame** is not
+resolution-invariant under the 512-edge downscale: in the table above the same
+4 px checkerboard reads density **906** at 1080p but only **38** at 4K —
+downscaling 3840→512 averages 1 px–scale cells toward flat, so a per-pixel
+checkerboard reads as **calm** and falls back **coarse** (the conservative
+outcome: it over- rather than under-pixelates real detail). A real photograph
+keeps its feature size across resolutions, so it reads consistently. Tested by
+`aliasing_is_the_documented_limitation` (pixel-art-scale cells survive the
+downscale and stay fine; 1 px cells alias to coarse).
+
+### Observability + backward compatibility
+
+- `status --json` gains an **additive**, skip-if-absent `current_auto_detail`
+  (`auto→N @WxH` / `auto-content→N @WxH`); a report without it parses, a stale
+  one ignores it. 3 backward-compat IPC tests.
+- TUI caption shows `pixel auto-content→N` for the preview canvas; the `p`
+  cycle reaches `auto-content` (appended to `Pixel::ALL`, 7 → 8). The 10 pinned
+  100×30 TUI goldens are **unchanged** (goldens green, not regenerated — the
+  `B-knob` golden stays at its 6 keys; `auto-content` is reached by cycling, not
+  by the pinned initial frame).
+- No manifest/config version bump: the probe is a `skip`-if-`none` field;
+  plain `auto` exports are byte-for-byte unchanged (asserted against the pinned
+  concrete preset). No new runtime dependency (existing `image` crate +
+  pipeline only).
+
+### Tests at this tree
+
+- **pixcore**: content statistic + preset combine rule — determinism (same
+  bytes ⇒ same density), `floor_is_a_floor` (content never refines below the
+  size preset), the aliasing limitation, downscale-still-discriminates,
+  missing/stale-probe falls back to the floor. 116 pixcore (was 108; **+8**).
+- **pixpapers integration** (`crates/pixpapers/src/harness.rs`): end-to-end
+  via the real CLI in a hermetic home — busy `auto-content` is byte-identical
+  to plain `auto` (content never refines below the floor); the flat ramp pushes
+  coarser; the persisted probe JSON round-trips; a non-content preset clears
+  the probe. Threshold-free assertions (expected preset derived from the public
+  resolver, not a hard-coded number).
+- Workspace totals: **200** without features (116 pixcore + 74 pixpapers bin +
+  10 slideshow) · **205** with `--features gui` (+5 `gui::model`). Both green.
+
+### Gates run
+
+`cargo build --release` clean · `cargo test --workspace` green (200) ·
+`cargo test --workspace --features gui` green (205) ·
+`clippy --workspace --all-targets --all-features -- -D warnings` clean ·
+`cargo fmt --all --check` clean · `env -u WAYLAND_DISPLAY test/smoke.sh` ok ·
+`test/verify-x11.sh` ok (default path untouched, root pixmap byte-identical) ·
+`test/verify-tui.sh` ok.
+
+### Website (`docs/index.html`, one file)
+
+Added an `#content-auto` section (after `#auto`) with **3 real `pixpapers
+export` PNGs** into `docs/img/` (release binary, hermetic home):
+`content-auto-busy.png` (busy pattern, `auto-content→16`, floor held),
+`content-auto-flat.png` (sunset, `auto-content→64`, pushed coarse),
+`content-auto-flat-auto.png` (same sunset, plain `auto→16`, for contrast) —
+busy and calm `cmp`-identical to their pinned presets as above. Each `alt`
+describes the actual subject (verified with the vision `image_describe` rig, not
+assumed). Same contract as the rest of the site: all `src` are same-origin
+`img/*.png`, favicon `data:` URI untouched, palette unchanged (`#f7b32b`
+accent), explicit `width`/`height` on every `<img>`. Re-verified after the
+edit: `web_check` @ 360 px → **0 console errors, 0 failed requests**;
+`web_find_overflows` @ 360/400/720/1080 → **0 overflow**; `web_performance` @
+1440 → `horizontal_overflow: 0`, **0 images over 300 KB** (new PNGs are 43–80
+KB), 0 images missing dimensions, 0 problems.
+
+### Not run / deferred
+
+- The full **vision test rig** (`verify-*.sh` screenshot-diff pipeline) was
+  **not** run for this change — `image_describe` was used only to confirm the
+  three images' subjects for honest `alt` text.
+- README drift: the `## Shipped in v0.2` heading (which the v0.3.0 release
+  disclosed as stale, listing the Native GUI that shipped after 0.2.1) was
+  retitled `## Shipped since v0.2`, the "Auto-preset by image content" entry
+  was moved from "Deliberately not in v0.2" to a shipped `auto-content` bullet,
+  and the "not included" list now states plain `auto` stays size-only while
+  `auto-content` is the explicit opt-in.

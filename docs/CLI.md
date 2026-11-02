@@ -32,7 +32,7 @@ pixpapers -V | -h
 
 | Command | Values | Notes |
 |---|---|---|
-| `pixel <ID> <P>` | `8 16 32 64 128 normal auto` | Block size in pixels. `normal` = no pixelation for this wallpaper. `auto` = the preset is picked per output at render time: the smallest of 8/16/32/64/128 whose grid keeps the output's long edge at ≤ 120 blocks (≤960→8, ≤1920→16, ≤3840→32, ≤7680→64, else 128 — so 1920×1080 gets 16, the shipped default). Bigger output ⇒ coarser blocks, same blocky look; `auto` never picks `normal`. The resolved preset shows in the daemon's status label and in `export` output; the variant cache always stores concrete presets. |
+| `pixel <ID> <P>` | `8 16 32 64 128 normal auto auto-content` | Block size in pixels. `normal` = no pixelation for this wallpaper. `auto` = the preset is picked per output at render time: the smallest of 8/16/32/64/128 whose grid keeps the output's long edge at ≤ 120 blocks (≤960→8, ≤1920→16, ≤3840→32, ≤7680→64, else 128 — so 1920×1080 gets 16, the shipped default). Bigger output ⇒ coarser blocks, same blocky look; `auto` never picks `normal`. The resolved preset shows in the daemon's status label and in `export` output; the variant cache always stores concrete presets. `auto-content` (aliases `content`, `auto content`) starts from that same size pick and may only push it **coarser** from the picture's own detail — see [Content-based auto-preset](#content-based-auto-preset); it never refines below the size floor and never picks `normal`. |
 | `placement <ID> <PL>` | `fit cover-gutter cover-crop stretch` | See below. |
 | `bg <ID> <COLOR>` | `#rrggbb` | Letterbox / gutter color. |
 | `gutter <ID> <PX>` | `0..=4096` | Mat width for `cover-gutter` (px in output space). |
@@ -44,13 +44,66 @@ pixpapers -V | -h
 
 | Command | Meaning |
 |---|---|
-| `default pixel <P>` | Default preset for new entries and entries never set explicitly. Accepts `auto` (see `pixel`). |
+| `default pixel <P>` | Default preset for new entries and entries never set explicitly. Accepts `auto` and `auto-content` (see `pixel`). Setting it to `auto-content` probes the picture once for every inheriting (never-explicitly-set) entry and for each new `add`. |
 | `default placement <PL>` | Same for placement. |
 | `default palette <M>` | Same for the palette look. |
 | `default dither <D>` | Same for the dither. |
 | `default gutter-style <ST>` | Same for how the `cover-gutter` ring is filled (`solid`/`bleed`). |
 
 Changing a default re-applies to any *unset* current wallpaper immediately.
+
+## Content-based auto-preset
+
+`auto` picks a preset from the output's **size** only. `auto-content` is a
+separate, opt-in token that also reads the **picture** — added on explicit
+request without touching plain `auto`, which stays byte-for-byte unchanged.
+
+**The rule.** `auto-content` first resolves the same preset `auto` would from
+the output size, and treats it as a **floor**; the image's own detail may then
+push it **coarser**, never finer. So:
+
+- a **busy, high-detail** photo resolves to the finest content preset and is
+  therefore *held at the size floor* — `auto-content` renders byte-identically
+  to plain `auto` at that size;
+- a **calm, flat** graphic (a gradient, a solid, a poster) measures as low
+  detail and pixelates **harder than `auto` would** on a big screen — the
+  intended way to make a flat image look deliberately blocky without hand-
+  picking a size.
+
+**The statistic** (integer-only, so it is deterministic): the colour image is
+downscaled to a 512 px analysis edge (never upscaled), converted to Rec.601
+luma, and scored by the mean absolute horizontal + vertical neighbour gradient
+(scaled ×16, range 0..4080). `content_preset` maps density `≥64→8`, `≥32→16`,
+`≥16→32`, `≥8→64`, else `128`; `resolve_content_for` then clamps it against the
+size floor. Same source bytes + same rule version ⇒ always the same preset.
+
+**Where it is computed.** The picture is measured **once, on the CLI/state
+side** and the outcome is *persisted* with the entry (a `{rule, density}`
+content probe) at:
+
+- `pixpapers pixel <ID> auto-content` — probes that entry's stored original
+  (choosing any *other* preset clears the stale probe);
+- `pixpapers default pixel auto-content` — backfills the probe for every
+  inheriting entry and applies to future `add`s;
+- `pixpapers add …` — probed at add time **iff** the default pixel is
+  `auto-content`.
+
+**The daemon never re-analyses** an image — it stays a pure renderer and just
+applies the persisted density against the output size. A missing or
+stale-rule-version probe falls back to the plain size floor, so such an entry
+resolves **byte-identically to `auto`**.
+
+**Observability and compatibility.** The resolved preset is always concrete:
+cache filenames and the `export` wrote-line (`auto-content→N`) name it, the TUI
+caption shows `pixel auto-content→N` for the preview canvas, and `status
+--json` gains an additive, skip-if-absent `current_auto_detail` (`auto→N @WxH`
+/ `auto-content→N @WxH`) — no manifest or config version bump. `auto-content`
+is accepted by `export --pixel` (render-only; it reads the entry's persisted
+probe, never re-measures). **Aliasing is the documented limitation:** a
+per-pixel checkerboard averages to flat and reads as calm, so the coarse
+fallback is the conservative outcome rather than over-pixelating detail.
+Measured per-image analysis cost and combine-rule evidence in
+[docs/VERIFICATION.md](VERIFICATION.md#content-based-auto-preset).
 
 ## Slideshow (live wallpapers)
 
@@ -70,7 +123,7 @@ TOML (`config.toml`): `[slideshow]` with `enabled` (bool, default `false`) and `
 |---|---|
 | `status [--json] [--bench]` | Daemon truth when running (pid, outputs with live render label, enabled policy); filesystem view otherwise. The label is `{pixel}/{placement}-{palette}[-{dither}]` — e.g. `16/fit-auto`, `16/fit-vga-fs` — the same tokens as the variant cache key (the dither segment is omitted when `none`). For an `auto` entry the label's pixel slot names the preset resolved for that output (e.g. `32/fit-auto` on a 4K screen), so text and `--json` both show the look actually on screen. `--bench` adds self-timed switch/render latencies, variant-cache hit rate, RSS + fd count. |
 | `bar` | One line for a bar — the [waybar module's](contrib/waybar/README.md) text source. Character-exact: `▞ <title> · <pixel>/<placement-short>` while a current entry exists (even with the daemon dead — config+manifest truth through the daemon's own resolution chain, so the label never shows a look the daemon would not render), `▞ pixpapers — set one` with no entry and the daemon alive, `▞ pixpapers · daemon down` with the socket dead. Always exactly one line, always exit 0 (waybar's custom module auto-hides on empty output or a non-zero exit, so the module can never blink). Never writes, never spawns; works offline. |
-| `export <ID> <WxH> [--pixel P] [--placement PL] [--bg C] [--gutter N] [--gutter-style ST] [--palette M] [--dither D] [-o OUT]` | Offline render to PNG using the daemon's exact composite path — a preview that cannot lie. No daemon needed. `--palette`/`--dither`/`--gutter-style` override this render only (never persisted). `--pixel` accepts `auto` too: it resolves against the requested `WxH` (the daemon's exact rule), the wrote-line shows `auto→N`, and the default filename carries the concrete preset. Named modes write a palette PNG (PLTE = the table deduped by first occurrence, a transparent placeholder at index 0, and the bg colour merged in when absent); `off`/`auto` stay plain RGBA. |
+| `export <ID> <WxH> [--pixel P] [--placement PL] [--bg C] [--gutter N] [--gutter-style ST] [--palette M] [--dither D] [-o OUT]` | Offline render to PNG using the daemon's exact composite path — a preview that cannot lie. No daemon needed. `--palette`/`--dither`/`--gutter-style` override this render only (never persisted). `--pixel` accepts `auto` and `auto-content` too: `auto` resolves against the requested `WxH` (the daemon's exact rule), `auto-content` clamps the entry's *persisted* content density against that same size floor (export never re-measures the picture — with no probe it equals `auto`); the wrote-line shows `auto→N` / `auto-content→N` and the default filename carries the concrete preset. Named modes write a palette PNG (PLTE = the table deduped by first occurrence, a transparent placeholder at index 0, and the bg colour merged in when absent); `off`/`auto` stay plain RGBA. |
 | `optimize [--all]` | Re-run the storage optimizer (PNG re-encode / strip cruft) over the library; `--all` includes entries unchanged since import. |
 | `completions <bash|zsh|fish>` | Shell completion script to stdout. |
 
@@ -92,7 +145,7 @@ nothing is printed to the terminal (errors included).
 | `a` | Add by path — input line; type/paste an image path (tilde-expanded), Enter | the CLI's own line: `added <id> · <title> · <W>×<H> · <optimize note> · <KB> KB`. Re-adding the same bytes is not an error: `already in library: <id> (<title>)`. `add` does not set current and does not Apply (CLI semantics) |
 | `s` | Set the selected entry current | `set <id> · <title> (applied)` — `(recorded — will show when the daemon runs)` when the daemon is down and cannot be spawned |
 | `c` | Cycle current to the next entry (1 step) | `cycle → <id> · <title> (<state>)` |
-| `p` | Cycle pixel `8→16→32→64→128→normal→auto` | `<id> → pixel <v>` (plus ` (not current — will apply on set)` when the edited entry is not current). The caption shows an `auto` entry's resolved preset for the preview canvas (`pixel auto→8`) |
+| `p` | Cycle pixel `8→16→32→64→128→normal→auto→auto-content` | `<id> → pixel <v>` (plus ` (not current — will apply on set)` when the edited entry is not current). Reaching `auto-content` probes the selected entry's stored original once and persists the result. The caption shows an `auto`/`auto-content` entry's resolved preset for the preview canvas (`pixel auto→8`, `pixel auto-content→64`) |
 | `l` | Cycle placement `fit→cover-gutter→cover-crop→stretch` | `<id> → placement <v>` |
 | `t` | Cycle palette `off→auto→nes→gb→cga→ega→vga→gen16` | `<id> → palette <v>` |
 | `d` | Cycle dither `none→fs→atkinson→bayer2→bayer4→bayer8` | `<id> → dither <v>` |
@@ -237,6 +290,8 @@ Variant keys are `v2-<pixel>-<placement>[-g<g>]-<W>x<H>-<Q>[-<D>].png`:
 `<Q>` is the palette token (always present — `-auto`, `-nes`, …) and
 `<D>` the dither token, present only when the dither isn't `none`. The
 `v2` prefix invalidates v0.1 caches (they are disposable). `<pixel>` is
-always a concrete preset: an `auto` entry resolves per output size
-before the key is built, so `auto` shares the concrete preset's cache
-entry and never names a file.
+always a concrete preset: an `auto` entry resolves per output size and an
+`auto-content` entry clamps its persisted content density against that size
+floor before the key is built, so neither token ever names a file — each
+shares the concrete preset's cache entry. (The `-auto` you see at the *end*
+of a key is the palette `<Q>` token, not the pixel.)

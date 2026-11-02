@@ -34,10 +34,12 @@ user unit in [`contrib/`](contrib/).
 
 ## Concepts in ten lines
 
-- **Preset** = block size: `8 | 16 | 32 | 64 | 128 | normal | auto`.
-  Default **16**. `auto` picks the preset from each output's size at
-  render time — the smallest preset leaving ≤ 120 blocks on the long edge
-  (1080p→16, 4K→32, 8K→64), so the look stays consistently blocky.
+- **Preset** = block size: `8 | 16 | 32 | 64 | 128 | normal | auto |
+  auto-content`. Default **16**. `auto` picks the preset from each output's
+  size at render time — the smallest preset leaving ≤ 120 blocks on the long
+  edge (1080p→16, 4K→32, 8K→64), so the look stays consistently blocky.
+  `auto-content` starts from that size pick and may only push it coarser
+  based on the picture's own detail (analysed once, on the CLI).
 - **Placement** = how the image meets the screen: `fit` (letterbox, default),
   `cover-gutter` (image inside a colored mat), `cover-crop`, `stretch`.
 - `bg_color` is the border/gutter color per wallpaper (default black).
@@ -118,7 +120,10 @@ protocol and are expected to work, but are **untested** here. On hyprland,
 don't run `hyprpaper` at the same time — the background layer has no
 arbitration, last one wins.
 
-## Shipped in v0.2
+## Shipped since v0.2
+
+(The list below spans v0.2 and the v0.3 line; the exact version each item
+landed in is in [CHANGELOG.md](CHANGELOG.md).)
 
 - **Retro palettes and dithering** — `auto / nes / gb / cga / ega / vga /
   gen16` × `none / fs / atkinson / bayer2 / bayer4 / bayer8`, per wallpaper
@@ -143,18 +148,30 @@ arbitration, last one wins.
   PNGs — the window never renders a full-size image. `cargo build --release
   --features gui` (11.6 MiB vs 4.7 MiB default); evidence in
   [docs/VERIFICATION.md](docs/VERIFICATION.md#native-gui).
+- **`auto-content` pixel preset** — like `auto`, but it also reads the
+  picture. It starts from the very preset `auto` would pick from the output's
+  size and can only push it *coarser*: a calm, flat graphic on a big screen
+  pixelates harder than `auto` would, while a busy photo stays exactly where
+  `auto` put it. The image is analysed once on the CLI and the result is
+  stored with the wallpaper — the daemon never re-reads pixels, and every
+  cache name / status / export line still shows a concrete preset. Set it per
+  wallpaper (`pixpapers pixel <id> auto-content`, alias `content`), as a
+  default (`default pixel auto-content`), or via the TUI `p` cycle. Plain
+  `auto` is byte-for-byte unchanged. Landing in the next release; see
+  [docs/CLI.md](docs/CLI.md#content-based-auto-preset).
 - **waybar module** — `pixpapers bar` plus the ready-made module snippet
   in [`contrib/waybar/`](contrib/waybar/): click opens the TUI in a
   terminal, the wheel cycles wallpapers (up = next, down = previous,
   wrap-around), the label refreshes on every tick.
 
-## Deliberately not in v0.2
+## Deliberately not included
 
 - **Animated/video wallpapers** — the slideshow cycles *existing* stills
   on a timer; decoding video or animating a wallpaper in place is out.
-- **Auto-preset by image content** — `auto` picks the preset from the
-  output's *size*, never from the picture: you pick the look; the tool
-  doesn't guess from pixels.
+- **A guessing-by-default preset** — `auto` still picks from the output's
+  *size* only and stays byte-for-byte unchanged; you opt into reading the
+  picture explicitly with the separate `auto-content` token (above). The
+  tool never surprises you by re-picking a look you didn't ask for.
 - **MPRIS-ish hooks** — no media-stack integration.
 - **Exact fractional buffers** (viewporter/fractional-scale) — a separate
   track; current buffer sizing covers everything the tested matrix uses.

@@ -6,7 +6,42 @@ Semantic Versioning. The build log behind each area lives in
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-11-02
+### Added
+- **`auto-content` pixel preset** — auto-preset **by image content**, opt-in
+  as its own token so plain `auto` is untouched. Where `auto` picks a preset
+  from each output's *size* alone, `auto-content` also reads the picture: it
+  takes the size-derived preset as a **floor** and can only push it **coarser**
+  from the image's own detail — a calm, flat graphic on a big screen pixelates
+  harder than `auto` would, while a busy photo stays byte-identical to what
+  `auto` picks (content can never refine below the size floor). Accepted
+  everywhere a preset is — `pixpapers pixel <ID> auto-content` (aliases
+  `content`, `auto content`), `pixpapers default pixel auto-content`, `export
+  --pixel auto-content` (render-only), and the TUI `p` cycle — and it works for
+  per-entry and default knobs. The picture is measured **once, on the
+  CLI/state side** (at `pixel`/`default pixel`/`add` time) and the outcome is
+  *persisted* with the entry as a `{rule, density}` probe; **the daemon is a
+  pure renderer and never re-analyses**. The statistic is integer-only for
+  determinism: the colour image is downscaled to a 512 px analysis edge,
+  converted to Rec.601 luma, and scored by the mean absolute horizontal+vertical
+  neighbour gradient (×16); `content_preset` maps density ≥64→8, ≥32→16,
+  ≥16→32, ≥8→64, else 128, then `resolve_content_for` clamps it against the
+  size floor. Same source bytes + same rule version ⇒ same preset. Missing or
+  stale-rule probes fall back to the plain size floor, so an entry with no
+  probe resolves **byte-identically to `auto`**. Backward compatible with no
+  manifest/config version bump: the probe is a skip-if-`none` field, `auto`
+  exports are byte-for-byte unchanged (asserted against the pinned concrete
+  preset), and `status --json` gains only an additive, skip-if-absent
+  `current_auto_detail` label (`auto→N @WxH` / `auto-content→N @WxH`). Cache
+  filenames and the export wrote-line (`auto-content→N`) always name the
+  concrete preset, never the token. Aliasing is the documented limitation: a
+  1 px checkerboard averages to flat and reads as calm, so the coarse
+  fallback is the conservative outcome (tested). No new runtime dependency
+  (the existing `image` crate + pipeline only). Measured per-image analysis
+  cost and the combine-rule evidence in
+  [docs/VERIFICATION.md](docs/VERIFICATION.md#content-based-auto-preset);
+  user docs in [docs/CLI.md](docs/CLI.md#content-based-auto-preset). This is
+  the AGENTS.md "Deferred by decision" item, built on explicit request.
+
 
 ### Added
 - **Native GUI** (`pixpapers gui`) — a native egui/`eframe` control window, shipped behind a **default-off** `gui` cargo feature so the default binary keeps its exact dependency set and does not list the subcommand in `--help`. It is a client only: every action calls the same `commands::*` + `cli::apply_now` the CLI and TUI use, so a set from the window writes a byte-for-byte identical manifest to `pixpapers set` (asserted in-process in `src/gui/model.rs`), and thumbnails reuse the cached variant PNGs (no full-size render in the GUI process). The app logic lives in a headless, unit-tested view-model; `eframe` is a thin paint layer. `cargo build --release --features gui` = 12,138,488 B vs 4,907,968 B default (+7.2 MiB of eframe/glow/winit); with the feature off the GUI source adds **0 bytes** — the sole OFF delta vs the pre-GUI binary is the `image` 0.25.9→0.25.10 patch bump eframe's dependency constraint forces (+60 KiB), proven by a byte-identical control build of the HEAD source on the same lock. Gates, the control build, and one real Xvfb screenshot in [docs/VERIFICATION.md](docs/VERIFICATION.md#native-gui).
