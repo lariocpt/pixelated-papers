@@ -310,6 +310,58 @@ footer a { color: var(--fg-muted); }
     </p>
   </section>
 
+  <section id="content-auto" aria-label="Content-based auto preset">
+    <style>
+      #content-auto .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 1.25rem 0 .5rem; }
+      #content-auto .grid figure { margin: 0; }
+      #content-auto .grid figcaption b { color: var(--accent); }
+      #content-auto .note { font-size: .86rem; color: var(--fg-muted); }
+      @media (max-width: 720px) { #content-auto .grid { grid-template-columns: 1fr; } }
+    </style>
+    <h2><span class="h">##</span> auto-content</h2>
+    <p>
+      <code>auto</code> reads the screen. <code>auto-content</code> reads the
+      <em>picture</em> too — and can only push it <b>coarser</b> than
+      <code>auto</code> would, never finer. It measures the image's own detail
+      once, on the CLI, and starts from the same size preset
+      <code>auto</code> picked as a floor. So a <b>busy, high-detail</b> image
+      lands right back on that floor (the look you'd get from plain
+      <code>auto</code>), while a <b>calm, flat</b> graphic on a big screen
+      pixelates harder than <code>auto</code> ever would — the point is to make
+      a flat image look deliberately blocky without hand-picking a size. Below:
+      all three exported at 1920×1080. The busy dot pattern (left) holds at the
+      <code>auto</code> floor of 16; the sunset (centre) reads as low-detail and
+      is pushed to 64 — versus the 16 it would get from plain <code>auto</code>
+      (right).
+    </p>
+    <div class="grid">
+      <figure>
+        <img src="img/content-auto-busy.png" width="1920" height="1080" alt="A busy grayscale pattern of repeating dots, pixelated by auto-content at full HD; its high detail keeps it on the size floor of 16 pixel blocks." loading="lazy">
+        <figcaption>busy photo, <code>auto-content</code> → <b>pixel 16</b> (detail 123 → 8, held at the floor)</figcaption>
+      </figure>
+      <figure>
+        <img src="img/content-auto-flat.png" width="1920" height="1080" alt="The sunset wallpaper, pixelated by auto-content at full HD; its calm, flat content pushes it coarser to 64 pixel blocks." loading="lazy">
+        <figcaption>calm sunset, <code>auto-content</code> → <b>pixel 64</b> (detail 11 → coarser)</figcaption>
+      </figure>
+      <figure>
+        <img src="img/content-auto-flat-auto.png" width="1920" height="1080" alt="The same sunset wallpaper pixelated by the plain auto preset at full HD, which resolves to only 16 pixel blocks because it reads the size, not the picture." loading="lazy">
+        <figcaption>same sunset, plain <code>auto</code> → <b>pixel 16</b> (for contrast)</figcaption>
+      </figure>
+    </div>
+    <p class="note">
+      Real <code>pixpapers export … --pixel auto-content</code> renders, the
+      busy and calm ones <code>cmp</code>-identical to the preset they resolved
+      to (<code>16</code> and <code>64</code>) pinned by hand. The picture is
+      analysed <b>once</b> on the CLI and the result is stored with the
+      wallpaper — the daemon stays a pure renderer and never re-reads pixels.
+      The concrete preset is never a secret: the cache names it
+      (<code>v2-64-…</code>), the export line says <code>auto-content→64</code>,
+      and plain <code>auto</code> is byte-for-byte unchanged. It's opt-in —
+      <code>pixpapers pixel &lt;id&gt; auto-content</code> (alias
+      <code>content</code>) or the TUI <code>p</code> cycle.
+    </p>
+  </section>
+
   <section id="slideshow" aria-label="Live wallpapers">
     <h2><span class="h">##</span> live wallpapers</h2>
     <p>
