@@ -377,6 +377,27 @@ footer a { color: var(--fg-muted); }
     </table>
   </section>
 
+  <section aria-label="Native GUI">
+    <h2><span class="h">##</span> a native window</h2>
+    <p>
+      A GUI control window, shipped behind an opt-in <code>gui</code> build
+      feature so the default binary never grows an <code>eframe</code> dependency.
+      Build it with <code>cargo build --release --features gui</code>, then run
+      <code>pixpapers gui</code>. It is a <em>client</em>, not a second owner of
+      state: every button routes through the same commands the CLI and TUI use, so a
+      wallpaper set from the window writes byte-for-byte the same manifest as
+      <code>pixpapers set</code>. Thumbnails reuse the cached variant PNGs — the
+      window never renders a full-size image.
+    </p>
+    <figure>
+      <img src="img/gui-control.png" width="900" height="620"
+           alt="The pixpapers native GUI control window: a Library tab listing one wallpaper with its cached thumbnail, a row of actions (set now, cycle, remove), and a per-wallpaper panel headed This wallpaper — Sunset Gradient. A real screenshot captured under Xvfb." loading="lazy">
+      <figcaption>a real screenshot of <code>pixpapers gui</code> on a hermetic
+      <code>PIXPAPERS_HOME</code>, rendered under Xvfb with software GL — library
+      list, cached thumbnail, actions, and the per-wallpaper knob panel.</figcaption>
+    </figure>
+  </section>
+
   <section aria-label="Fast and small">
     <h2><span class="h">##</span> fast and small</h2>
     <p>
