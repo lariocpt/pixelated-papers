@@ -100,10 +100,25 @@ pub struct StatusReport {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OutputStatus {
     pub name: String,
+    /// Buffer (physical) dimensions the daemon renders at.
     pub width: u32,
     pub height: u32,
+    /// Legacy integer `wl_output.scale` as the compositor reported it.
     pub scale: u32,
     pub variant: Option<String>,
+    /// How the buffer size was negotiated: `"exact"` = wp_viewporter +
+    /// wp_fractional_scale_v1 engaged, buffer is the physical pixel grid
+    /// (width×height above is the panel's own grid); `"legacy"` = integer
+    /// oversampling (buffer = logical × `scale`). Additive, skip-if-absent
+    /// (the media-keys pattern): the x11 backend omits it, a pre-feature
+    /// daemon omits it, an old client ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_path: Option<String>,
+    /// The compositor-negotiated fractional scale as a fixed two-decimal
+    /// string (`"1.50"`), present only once a `preferred_scale` arrived.
+    /// Same additive contract as `scale_path`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frac_scale: Option<String>,
 }
 
 /// `status --bench` payload: rolling numbers from the daemon's own render
@@ -234,5 +249,56 @@ mod tests {
         );
         assert_eq!(back.current_index, Some(2));
         assert_eq!(back.library_len, Some(7));
+    }
+
+    // ── exact fractional buffers: the per-output additive fields ──
+
+    fn base_output() -> OutputStatus {
+        OutputStatus {
+            name: "eDP-1".into(),
+            width: 3840,
+            height: 2160,
+            scale: 2,
+            variant: Some("16/fit-auto".into()),
+            scale_path: None,
+            frac_scale: None,
+        }
+    }
+
+    #[test]
+    fn output_scale_fields_are_skipped_when_absent() {
+        // x11 backend / pre-feature daemon: neither key is emitted, so the
+        // output object serializes to the exact pre-feature shape.
+        let json = serde_json::to_string(&base_output()).unwrap();
+        assert!(!json.contains("scale_path"), "{json}");
+        assert!(!json.contains("frac_scale"), "{json}");
+    }
+
+    #[test]
+    fn old_output_shape_deserializes_to_none() {
+        // A pre-feature status line must load with both fields None —
+        // the skip-if-absent contract a new client relies on.
+        let old = r#"{"name":"eDP-1","width":3840,"height":2160,"scale":2,"variant":null}"#;
+        let o: OutputStatus = serde_json::from_str(old).unwrap();
+        assert_eq!(o.scale_path, None);
+        assert_eq!(o.frac_scale, None);
+    }
+
+    #[test]
+    fn exact_path_output_round_trips() {
+        // The container-proof shape: exact path at 1.5 names the path and
+        // the negotiated scale next to the physical buffer dims.
+        let mut o = base_output();
+        o.width = 2880;
+        o.height = 1620;
+        o.scale_path = Some("exact".into());
+        o.frac_scale = Some("1.50".into());
+        let json = serde_json::to_string(&o).unwrap();
+        assert!(json.contains("\"scale_path\":\"exact\""), "{json}");
+        assert!(json.contains("\"frac_scale\":\"1.50\""), "{json}");
+        let back: OutputStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.scale_path.as_deref(), Some("exact"));
+        assert_eq!(back.frac_scale.as_deref(), Some("1.50"));
+        assert_eq!((back.width, back.height), (2880, 1620));
     }
 }

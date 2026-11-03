@@ -18,6 +18,11 @@ use wayland_client::protocol::wl_shm::{self, WlShm};
 use wayland_client::protocol::wl_shm_pool::WlShmPool;
 use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
+use wayland_protocols::wp::fractional_scale::v1::client::{
+    wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
+    wp_fractional_scale_v1::{self, WpFractionalScaleV1},
+};
+use wayland_protocols::wp::viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter};
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
     zwlr_layer_surface_v1::{
@@ -33,6 +38,86 @@ use crate::ipc::OutputStatus;
 use super::Backend;
 
 pub const NAMESPACE: &str = "pixelated-papers";
+
+// ── fractional-scale math (pure, unit-tested) ──────────────────────────
+//
+// `wp_fractional_scale_v1.preferred_scale` carries a u32 that is the
+// numerator of a fraction with denominator 120 (1.5 ⇒ 180). The wl_fixed
+// encoding that floated around in protocol drafts never shipped — the
+// merged spec (and sway/niri on the wire) is uint/120.
+
+/// Denominator of the `preferred_scale` numerator (spec: "the numerator
+/// of a fraction with a denominator of 120").
+pub const FRAC_DEN: u32 = 120;
+
+/// Which buffer path an output renders through.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ScalePath {
+    /// Legacy integer oversampling: buffer = logical × `wl_output.scale`,
+    /// `wl_surface.set_buffer_scale(S)`. The only path before this
+    /// feature; unchanged byte-for-byte.
+    Legacy,
+    /// Exact physical buffer: buffer = round(logical × frac), viewporter
+    /// destination = logical, buffer scale stays 1.
+    Exact,
+}
+
+/// Path selection. The exact path requires **both** protocols bound
+/// (viewporter AND fractional-scale manager) **and** a negotiated
+/// non-integer scale ≥ 1.0. Everything else — missing global, no
+/// `preferred_scale` yet, or an integer scale — stays on the legacy
+/// path, so compositors without fractional scale keep working unchanged.
+pub fn select_scale_path(
+    has_viewporter: bool,
+    has_fractional_scale: bool,
+    scale_num: Option<u32>,
+) -> ScalePath {
+    match scale_num {
+        Some(n)
+            if has_viewporter && has_fractional_scale && n >= FRAC_DEN && n % FRAC_DEN != 0 =>
+        {
+            ScalePath::Exact
+        }
+        _ => ScalePath::Legacy,
+    }
+}
+
+/// Buffer dimension from a logical size and a `preferred_scale`
+/// numerator: nearest integer, halves **away from zero** — the rounding
+/// rule the fractional-scale spec states for surface sizes, applied to
+/// buffer dims. Exact integer arithmetic, no floats:
+/// `round_half_away(logical·n/120) = (2·logical·n + 120) / 240`.
+pub fn buffer_dim(logical: u32, scale_num: u32) -> u32 {
+    let num = 2u64 * logical as u64 * scale_num as u64 + FRAC_DEN as u64;
+    ((num / (2 * FRAC_DEN as u64)).max(1)) as u32
+}
+
+/// The full geometry decision for one configured output:
+/// `(buffer width, buffer height, viewport destination)`. Exact path:
+/// buffer = round(logical × frac), destination = the logical size (the
+/// compositor maps the physical buffer back onto it 1:1). Legacy path:
+/// buffer = logical × integer scale, no destination (`None` — the
+/// viewport stays inert or reset).
+pub fn geometry(
+    path: ScalePath,
+    cfg_w: u32,
+    cfg_h: u32,
+    legacy_scale: u32,
+    frac_num: Option<u32>,
+) -> (u32, u32, Option<(u32, u32)>) {
+    match path {
+        ScalePath::Exact => {
+            let n = frac_num.unwrap_or(FRAC_DEN);
+            (buffer_dim(cfg_w, n), buffer_dim(cfg_h, n), Some((cfg_w, cfg_h)))
+        }
+        ScalePath::Legacy => (
+            cfg_w.saturating_mul(legacy_scale.max(1)),
+            cfg_h.saturating_mul(legacy_scale.max(1)),
+            None,
+        ),
+    }
+}
+
 
 /// Double-buffered shm slot for one output.
 #[derive(Default)]
@@ -58,16 +143,80 @@ pub struct Out {
     cfg_w: u32, // configured logical size from layer configure
     cfg_h: u32,
     configured: bool,
-    pub bw: u32, // buffer (physical) dims = cfg × scale
+    pub bw: u32, // buffer (physical) dims — see `recompute`
     pub bh: u32,
     buffers: [ShmBuf; 2],
     pub dirty: bool,
     pub label: Option<String>,
+    /// wp_viewport for this surface — created only when the compositor
+    /// offers viewporter AND fractional-scale (the exact path's pair).
+    viewport: Option<WpViewport>,
+    /// wp_fractional_scale_v1 for this surface (same condition).
+    fscale: Option<WpFractionalScaleV1>,
+    /// Last `preferred_scale` numerator (×120) the compositor sent.
+    frac_num: Option<u32>,
+    /// Current buffer path, recomputed on every configure/scale event.
+    scale_path: ScalePath,
+    /// Whether we currently have a viewport destination set (so the
+    /// exact→legacy transition knows to reset it).
+    dest_set: bool,
+}
+
+impl Out {
+    /// Re-derive buffer dims + viewport destination from the current
+    /// (configure size, legacy scale, negotiated fractional scale).
+    /// Rebuilds the shm slots when the size changes. Returns whether the
+    /// buffer size changed. The decision is a pure function of the three
+    /// inputs (`select_scale_path` + `geometry`), so a settled output
+    /// never flip-flops paths — no variant-cache thrash between paths.
+    fn recompute(&mut self, has_viewporter: bool, has_fscale: bool) -> bool {
+        self.scale_path = select_scale_path(has_viewporter, has_fscale, self.frac_num);
+        let (bw, bh, dest) = if self.configured {
+            geometry(self.scale_path, self.cfg_w, self.cfg_h, self.scale, self.frac_num)
+        } else {
+            (0, 0, None)
+        };
+        let changed = bw != self.bw || bh != self.bh;
+        if changed {
+            for b in self.buffers.iter_mut() {
+                *b = ShmBuf::default();
+            }
+        }
+        self.bw = bw;
+        self.bh = bh;
+        // Viewport bookkeeping: exact sets the destination to the logical
+        // size every time (idempotent); a fall back to legacy resets it so
+        // the buffer-scale path composites exactly as if no viewport
+        // existed. A viewport whose destination was never set is inert —
+        // integer-scale compositors see byte-for-byte unchanged behavior.
+        if let Some(vp) = &self.viewport {
+            match dest {
+                Some((dw, dh)) => {
+                    vp.set_destination(dw as i32, dh as i32);
+                    self.dest_set = true;
+                }
+                None if self.dest_set => {
+                    // set_destination(-1, -1) is the documented reset in
+                    // this binding set (no separate reset request exists).
+                    vp.set_destination(-1, -1);
+                    self.dest_set = false;
+                }
+                None => {}
+            }
+        }
+        changed
+    }
 }
 
 impl Drop for Out {
     fn drop(&mut self) {
         // tell the compositor goodbye; dropping proxies alone wouldn't
+        if let Some(f) = self.fscale.take() {
+            f.destroy();
+        }
+        if let Some(v) = self.viewport.take() {
+            v.destroy();
+        }
         if let Some(l) = self.layer.take() {
             l.destroy();
         }
@@ -141,6 +290,13 @@ pub struct LayerState {
     pub compositor: Option<WlCompositor>,
     pub shm: Option<WlShm>,
     pub layer_shell: Option<ZwlrLayerShellV1>,
+    /// wp_viewporter — stable global; present on wlroots-family compositors
+    /// (sway, niri, labwc…). Optional: absence pins the legacy path.
+    pub viewporter: Option<WpViewporter>,
+    /// wp_fractional_scale_manager_v1 — staging global. Exact buffers
+    /// need BOTH this and the viewporter; either absence pins the legacy
+    /// integer path (most compositors, unchanged).
+    pub fscale_manager: Option<WpFractionalScaleManagerV1>,
     pub outputs: Vec<Out>,
     pub compositor_lost: bool,
     pub bench: Bench,
@@ -155,6 +311,8 @@ impl LayerState {
             compositor: None,
             shm: None,
             layer_shell: None,
+            viewporter: None,
+            fscale_manager: None,
             outputs: Vec::new(),
             compositor_lost: false,
             bench: Bench::default(),
@@ -171,6 +329,60 @@ impl LayerState {
         self.compositor.is_some() && self.shm.is_some() && self.layer_shell.is_some()
     }
 
+    /// (viewporter?, fractional-scale manager?) — the pair the exact path
+    /// needs. Tracked as one tuple so every recompute sees a consistent view.
+    fn scale_globals(&self) -> (bool, bool) {
+        (self.viewporter.is_some(), self.fscale_manager.is_some())
+    }
+
+    /// Attach the viewporter + fractional-scale helpers to a fresh surface.
+    /// Only ever called with both globals present: the viewport must exist
+    /// before `get_fractional_scale` (the spec pairs them), and one
+    /// fractional-scale object per surface is the protocol's error case.
+    fn attach_scale_helpers(
+        out: &mut Out,
+        vp: &WpViewporter,
+        fsm: &WpFractionalScaleManagerV1,
+        qh: &QueueHandle<LayerState>,
+    ) {
+        let Some(surface) = out.surface.clone() else {
+            return;
+        };
+        out.viewport = Some(vp.get_viewport(&surface, qh, ()));
+        out.fscale = Some(fsm.get_fractional_scale(&surface, qh, out.id));
+    }
+
+    /// A scale global just arrived: adopt the pair where needed and
+    /// re-render every output whose buffer geometry changed.
+    fn adopt_scale_globals(&mut self, conn: &Connection) {
+        for id in self.adopt_scale_helpers() {
+            self.render_output(id, conn);
+        }
+    }
+
+    /// The compositor offered viewporter/fractional-scale *after* surfaces
+    /// existed (registry event order is not guaranteed): adopt the pair on
+    /// every surface and re-derive geometry. Returns the ids whose buffer
+    /// size changed so the caller can re-render them.
+    fn adopt_scale_helpers(&mut self) -> Vec<usize> {
+        let (hv, hf) = self.scale_globals();
+        let (Some(vp), Some(fsm), Some(qh)) =
+            (self.viewporter.clone(), self.fscale_manager.clone(), self.qh.clone())
+        else {
+            return Vec::new();
+        };
+        let mut changed = Vec::new();
+        for out in self.outputs.iter_mut() {
+            if out.surface.is_some() && out.viewport.is_none() {
+                Self::attach_scale_helpers(out, &vp, &fsm, &qh);
+            }
+            if out.recompute(hv, hf) {
+                changed.push(out.id);
+            }
+        }
+        changed
+    }
+
     /// Create a background layer surface for any output that lacks one
     /// (called when globals arrive and on output hotplug).
     pub fn ensure_surfaces(&mut self) {
@@ -184,6 +396,11 @@ impl LayerState {
         ) else {
             return;
         };
+        let scale_pair = self
+            .viewporter
+            .clone()
+            .zip(self.fscale_manager.clone())
+            .zip(self.qh.clone());
         for out in self.outputs.iter_mut() {
             if out.surface.is_some() {
                 continue;
@@ -211,6 +428,11 @@ impl LayerState {
             out.surface = Some(surface);
             out.layer = Some(layer);
             out.configured = false;
+            // Exact-path pair, when the compositor offers both (the
+            // compositor may also send preferred_scale right away).
+            if let Some(((vp, fsm), sqh)) = &scale_pair {
+                Self::attach_scale_helpers(out, vp, fsm, sqh);
+            }
             log::info!(
                 "surface created for output {} (reg {})",
                 out.name,
@@ -297,7 +519,14 @@ impl LayerState {
         let Some(buf) = out.buffers[slot].buffer.clone() else {
             return;
         };
-        surface.set_buffer_scale(out.scale.max(1) as i32);
+        // Exact path: the buffer already IS the physical grid, so the
+        // buffer scale stays 1 and the viewport destination (set in
+        // `recompute`) maps it onto the logical size 1:1. Legacy path:
+        // unchanged integer scale.
+        surface.set_buffer_scale(match out.scale_path {
+            ScalePath::Exact => 1,
+            ScalePath::Legacy => out.scale.max(1) as i32,
+        });
         surface.attach(Some(&buf), 0, 0);
         surface.damage_buffer(0, 0, out.bw as i32, out.bh as i32);
         surface.commit();
@@ -313,10 +542,30 @@ impl LayerState {
         }
     }
 
-    pub fn snapshot(&self) -> Vec<(String, u32, u32, u32, Option<String>)> {
+    pub fn snapshot(&self) -> Vec<OutputStatus> {
         self.outputs
             .iter()
-            .map(|o| (o.name.clone(), o.bw, o.bh, o.scale, o.label.clone()))
+            .map(|o| OutputStatus {
+                name: o.name.clone(),
+                width: o.bw,
+                height: o.bh,
+                scale: o.scale,
+                variant: o.label.clone(),
+                // Additive observability (media-keys pattern): the width×
+                // height above is the buffer size; these two say HOW it was
+                // negotiated. scale_path is always known on this backend;
+                // frac_scale only once the compositor sent preferred_scale.
+                scale_path: Some(
+                    match o.scale_path {
+                        ScalePath::Exact => "exact",
+                        ScalePath::Legacy => "legacy",
+                    }
+                    .to_string(),
+                ),
+                frac_scale: o
+                    .frac_num
+                    .map(|n| format!("{:.2}", n as f64 / FRAC_DEN as f64)),
+            })
             .collect()
     }
 }
@@ -368,7 +617,7 @@ impl Dispatch<WlRegistry, ()> for LayerState {
         registry: &WlRegistry,
         event: wl_registry::Event,
         _: &(),
-        _: &Connection,
+        conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
         match event {
@@ -389,6 +638,21 @@ impl Dispatch<WlRegistry, ()> for LayerState {
                         Some(registry.bind::<ZwlrLayerShellV1, _, _>(name, version.min(4), qh, ()));
                     log::info!("layer-shell v{version} bound");
                 }
+                "wp_viewporter" => {
+                    state.viewporter =
+                        Some(registry.bind::<WpViewporter, _, _>(name, version.min(1), qh, ()));
+                    log::info!("viewporter bound");
+                    state.adopt_scale_globals(conn);
+                }
+                "wp_fractional_scale_manager_v1" => {
+                    state.fscale_manager = Some(registry.bind::<
+                        WpFractionalScaleManagerV1,
+                        _,
+                        _,
+                    >(name, version.min(1), qh, ()));
+                    log::info!("fractional-scale manager bound");
+                    state.adopt_scale_globals(conn);
+                }
                 "wl_output" => {
                     let id = state.next_id;
                     let out = registry.bind::<WlOutput, _, _>(name, version.min(4), qh, id);
@@ -408,6 +672,11 @@ impl Dispatch<WlRegistry, ()> for LayerState {
                         buffers: Default::default(),
                         dirty: false,
                         label: None,
+                        viewport: None,
+                        fscale: None,
+                        frac_num: None,
+                        scale_path: ScalePath::Legacy,
+                        dest_set: false,
                     });
                     state.next_id += 1;
                     state.ensure_surfaces();
@@ -434,6 +703,7 @@ impl Dispatch<WlOutput, usize> for LayerState {
         conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+        let (hv, hf) = state.scale_globals();
         let Some(out) = state.outputs.iter_mut().find(|o| o.id == *id) else {
             return;
         };
@@ -442,13 +712,11 @@ impl Dispatch<WlOutput, usize> for LayerState {
                 let new = factor.max(1) as u32;
                 if new != out.scale {
                     out.scale = new;
-                    // buffer size depends on scale → rebuild slots
-                    for b in out.buffers.iter_mut() {
-                        *b = ShmBuf::default();
-                    }
+                    // Legacy buffer size depends on the integer scale. On
+                    // the exact path the fractional negotiation wins and
+                    // the legacy event alone changes nothing.
+                    out.recompute(hv, hf);
                     if out.configured {
-                        out.bw = out.cfg_w * new;
-                        out.bh = out.cfg_h * new;
                         out.dirty = true;
                         state.render_output(*id, conn);
                     }
@@ -476,6 +744,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for LayerState {
         conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+        let (hv, hf) = state.scale_globals();
         let Some(out) = state.outputs.iter_mut().find(|o| o.id == *id) else {
             return;
         };
@@ -490,23 +759,25 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for LayerState {
                 }
                 let w = width.max(1);
                 let h = height.max(1);
-                let changed = w != out.cfg_w || h != out.cfg_h;
                 out.cfg_w = w;
                 out.cfg_h = h;
-                if changed {
-                    for b in out.buffers.iter_mut() {
-                        *b = ShmBuf::default();
-                    }
-                }
-                out.bw = w.saturating_mul(out.scale.max(1));
-                out.bh = h.saturating_mul(out.scale.max(1));
                 out.configured = true;
+                // Slots are rebuilt inside recompute when the size moves.
+                out.recompute(hv, hf);
                 log::info!(
-                    "configure {}: {w}×{h} logical → {}×{} buffer (scale {})",
+                    "configure {}: {w}×{h} logical → {}×{} buffer ({}{})",
                     out.name,
                     out.bw,
                     out.bh,
-                    out.scale
+                    match out.scale_path {
+                        ScalePath::Exact => "exact",
+                        ScalePath::Legacy => "legacy",
+                    },
+                    match (out.scale_path, out.frac_num) {
+                        (ScalePath::Exact, Some(n)) =>
+                            format!(" · scale {:.2}", n as f64 / FRAC_DEN as f64),
+                        _ => format!(" · scale {}", out.scale),
+                    }
                 );
                 if let Some(surface) = &out.surface {
                     surface.commit(); // honour the configure
@@ -547,12 +818,49 @@ impl Dispatch<WlBuffer, (usize, usize)> for LayerState {
     }
 }
 
+impl Dispatch<WpFractionalScaleV1, usize> for LayerState {
+    fn event(
+        state: &mut Self,
+        _proxy: &WpFractionalScaleV1,
+        event: <WpFractionalScaleV1 as Proxy>::Event,
+        id: &usize,
+        conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        let scale = match event {
+            wp_fractional_scale_v1::Event::PreferredScale { scale } => scale,
+            _ => return,
+        };
+        let (hv, hf) = state.scale_globals();
+        let Some(out) = state.outputs.iter_mut().find(|o| o.id == *id) else {
+            return;
+        };
+        if Some(scale) == out.frac_num {
+            return; // repeat event, nothing moved
+        }
+        out.frac_num = Some(scale);
+        log::info!(
+            "fractional scale for {}: {scale}/120 = {:.2}",
+            out.name,
+            scale as f64 / FRAC_DEN as f64
+        );
+        out.recompute(hv, hf);
+        if out.configured {
+            out.dirty = true;
+            state.render_output(*id, conn);
+        }
+    }
+}
+
 wayland_client::delegate_noop!(LayerState: ignore WlCompositor);
 wayland_client::delegate_noop!(LayerState: ignore WlRegion);
 wayland_client::delegate_noop!(LayerState: ignore WlShm);
 wayland_client::delegate_noop!(LayerState: ignore WlShmPool);
 wayland_client::delegate_noop!(LayerState: ignore WlSurface);
 wayland_client::delegate_noop!(LayerState: ignore ZwlrLayerShellV1);
+wayland_client::delegate_noop!(LayerState: ignore WpViewporter);
+wayland_client::delegate_noop!(LayerState: ignore WpViewport);
+wayland_client::delegate_noop!(LayerState: ignore WpFractionalScaleManagerV1);
 
 // ── the backend the supervisor drives ───────────────────────────────────
 
@@ -644,17 +952,7 @@ impl Backend for LayerBackend {
     }
 
     fn snapshot(&self) -> Vec<OutputStatus> {
-        self.state
-            .snapshot()
-            .into_iter()
-            .map(|(name, width, height, scale, variant)| OutputStatus {
-                name,
-                width,
-                height,
-                scale,
-                variant,
-            })
-            .collect()
+        self.state.snapshot()
     }
 
     fn bench_counters(&self) -> super::BenchCounters {
@@ -681,5 +979,119 @@ impl Backend for LayerBackend {
         self.state.outputs.clear();
         let _ = self.conn.flush();
         let _ = self.queue.dispatch_pending(&mut self.state);
+    }
+}
+
+// ── unit tests: the pure scale math (no compositor needed) ─────────────
+
+#[cfg(test)]
+mod scale_tests {
+    use super::*;
+
+    // preferred_scale numerators (×120) for the common scales.
+    const S_100: u32 = 120; // 1.00
+    const S_125: u32 = 150; // 1.25
+    const S_150: u32 = 180; // 1.50
+    const S_175: u32 = 210; // 1.75
+    const S_200: u32 = 240; // 2.00
+
+    #[test]
+    fn buffer_dims_exact_at_common_scales() {
+        // The dev-panel case: 2560×1440 logical at 1.5 → the panel's own
+        // 3840×2160 grid (not the legacy 5120×2880 oversample).
+        assert_eq!(geometry(ScalePath::Exact, 2560, 1440, 2, Some(S_150)).0, 3840);
+        assert_eq!(geometry(ScalePath::Exact, 2560, 1440, 2, Some(S_150)).1, 2160);
+        // The container testbed case: 1920×1080 at 1.5 → 2880×1620.
+        assert_eq!(geometry(ScalePath::Exact, 1920, 1080, 2, Some(S_150)), (2880, 1620, Some((1920, 1080))));
+        // 1.25 and 1.75 on the same logical size.
+        assert_eq!(geometry(ScalePath::Exact, 1920, 1080, 2, Some(S_125)), (2400, 1350, Some((1920, 1080))));
+        assert_eq!(geometry(ScalePath::Exact, 1920, 1080, 2, Some(S_175)), (3360, 1890, Some((1920, 1080))));
+        // Integer numerators never reach the exact path (see path test),
+        // but the math is defined: 1.0 and 2.0 are exact multiples.
+        assert_eq!(buffer_dim(1920, S_100), 1920);
+        assert_eq!(buffer_dim(1920, S_200), 3840);
+    }
+
+    #[test]
+    fn viewport_destination_is_the_logical_size() {
+        // Exact path: destination = configure size, whatever the scale.
+        for n in [S_125, S_150, S_175] {
+            let (bw, bh, dest) = geometry(ScalePath::Exact, 1366, 768, 2, Some(n));
+            assert_eq!(dest, Some((1366, 768)), "destination must be logical at scale {n}/120");
+            assert!(bw >= 1366 && bh >= 768, "buffer {bw}×{bh} must cover the logical size");
+        }
+        // Legacy path: no destination at all (viewport inert / reset).
+        assert_eq!(geometry(ScalePath::Legacy, 1920, 1080, 2, Some(S_150)).2, None);
+    }
+
+    #[test]
+    fn buffer_dims_round_half_away_from_zero() {
+        // Rounding rule: nearest, halves away from zero — the spec's rule
+        // for surface sizes. Exact integer arithmetic, so boundaries are
+        // provable: logical·n/120 with remainder exactly 60 rounds up.
+        // 2 × 1.25 = 2.5 → 3 (half away from zero)
+        assert_eq!(buffer_dim(2, S_125), 3);
+        // 6 × 1.75 = 10.5 → 11
+        assert_eq!(buffer_dim(6, S_175), 11);
+        // 10 × 1.5 = 15 exact (no rounding)
+        assert_eq!(buffer_dim(10, S_150), 15);
+        // non-half products round to nearest
+        assert_eq!(buffer_dim(796, 150), 995); // 796×1.25 = 995 exact
+        assert_eq!(buffer_dim(191, 180), 287); // 191×1.5 = 286.5 → 287
+        assert_eq!(buffer_dim(189, 210), 331); // 189×1.75 = 330.75 → 331
+        assert_eq!(buffer_dim(190, 210), 333); // 190×1.75 = 332.5 → 333
+        // A dimension never collapses to zero (a 0-sized buffer is a
+        // protocol error even at absurd numerators).
+        assert_eq!(buffer_dim(0, S_100), 1);
+    }
+
+    #[test]
+    fn path_selection_requires_both_protocols_and_fractional_scale() {
+        // Full truth table over {viewporter?, fractional_scale?, scale}.
+        // Exact requires BOTH protocols AND a non-integer scale.
+        let cases: &[(&str, bool, bool, Option<u32>, ScalePath)] = &[
+            ("no protocols, fractional scale", false, false, Some(S_150), ScalePath::Legacy),
+            ("viewporter only", true, false, Some(S_150), ScalePath::Legacy),
+            ("fractional-scale only", false, true, Some(S_150), ScalePath::Legacy),
+            ("both protocols, fractional", true, true, Some(S_150), ScalePath::Exact),
+            ("both protocols, 1.25", true, true, Some(S_125), ScalePath::Exact),
+            ("both protocols, 1.75", true, true, Some(S_175), ScalePath::Exact),
+            ("both protocols, no preferred_scale yet", true, true, None, ScalePath::Legacy),
+            ("both protocols, integer 1.0", true, true, Some(S_100), ScalePath::Legacy),
+            ("both protocols, integer 2.0", true, true, Some(S_200), ScalePath::Legacy),
+            ("no protocols, integer", false, false, Some(S_200), ScalePath::Legacy),
+            ("degenerate 0/120 stays legacy", true, true, Some(0), ScalePath::Legacy),
+            ("sub-unit 90/120 (0.75) stays legacy", true, true, Some(90), ScalePath::Legacy),
+        ];
+        for (what, vp, fs, num, want) in cases {
+            assert_eq!(
+                select_scale_path(*vp, *fs, *num),
+                *want,
+                "case: {what}"
+            );
+        }
+    }
+
+    #[test]
+    fn integer_scales_keep_the_legacy_geometry_byte_for_byte() {
+        // The legacy geometry is exactly the pre-feature formula:
+        // buffer = logical × integer scale, no viewport destination.
+        assert_eq!(geometry(ScalePath::Legacy, 3840, 2160, 1, None), (3840, 2160, None));
+        assert_eq!(geometry(ScalePath::Legacy, 2560, 1440, 2, None), (5120, 2880, None));
+        assert_eq!(geometry(ScalePath::Legacy, 1920, 1080, 1, Some(S_100)), (1920, 1080, None));
+        // Even with a fractional numerator in flight, a legacy decision
+        // (missing protocol) uses the integer scale — the old oversample.
+        assert_eq!(geometry(ScalePath::Legacy, 2560, 1440, 2, Some(S_150)), (5120, 2880, None));
+    }
+
+    #[test]
+    fn path_selection_is_a_pure_function_of_its_inputs() {
+        // No thrash: the same (globals, scale) inputs always select the
+        // same path, so a settled output cannot flip paths between renders
+        // (the variant canvas cache keys on the concrete buffer size).
+        for _ in 0..8 {
+            assert_eq!(select_scale_path(true, true, Some(S_150)), ScalePath::Exact);
+            assert_eq!(select_scale_path(true, true, Some(S_100)), ScalePath::Legacy);
+        }
     }
 }

@@ -121,12 +121,19 @@ pub fn print_report(r: &StatusReport, cfg: &Config, json: bool) {
         );
     } else {
         for o in &r.outputs {
+            // The scale column names the negotiation only when the exact
+            // fractional path is live ("scale 1.50 exact"); every other
+            // case (legacy integer, x11, pre-feature daemon) prints the
+            // plain integer exactly as before.
+            let scale = match (&o.scale_path, &o.frac_scale) {
+                (Some(p), Some(f)) if p == "exact" => format!("{f} exact"),
+                _ => format!("{}", o.scale),
+            };
             println!(
-                "  {:<14} {}x{} scale {}   {}",
+                "  {:<14} {}x{} scale {scale}   {}",
                 o.name,
                 o.width,
                 o.height,
-                o.scale,
                 o.variant.as_deref().unwrap_or("(empty)")
             );
         }

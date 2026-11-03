@@ -396,6 +396,11 @@ impl Backend for X11Backend {
                 height: s.h,
                 scale: 1, // X11 has no fractional scale (§B.2)
                 variant: s.label.clone(),
+                // No Wayland negotiation on this backend: both fields stay
+                // absent (skip-if-absent), keeping the x11 status shape
+                // byte-for-byte unchanged.
+                scale_path: None,
+                frac_scale: None,
             })
             .collect()
     }
