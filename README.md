@@ -129,8 +129,8 @@ arbitration, last one wins.
 
 ## Shipped since v0.2
 
-(The list below spans v0.2 and the v0.3 line; the exact version each item
-landed in is in [CHANGELOG.md](CHANGELOG.md).)
+(The list below spans the v0.2 through v0.4 lines; the exact version each
+item landed in is in [CHANGELOG.md](CHANGELOG.md).)
 
 - **Retro palettes and dithering** — `auto / nes / gb / cga / ega / vga /
   gen16` × `none / fs / atkinson / bayer2 / bayer4 / bayer8`, per wallpaper
@@ -164,8 +164,16 @@ landed in is in [CHANGELOG.md](CHANGELOG.md).)
   cache name / status / export line still shows a concrete preset. Set it per
   wallpaper (`pixpapers pixel <id> auto-content`, alias `content`), as a
   default (`default pixel auto-content`), or via the TUI `p` cycle. Plain
-  `auto` is byte-for-byte unchanged. Landing in the next release; see
+  `auto` is byte-for-byte unchanged. Shipped in v0.4.0; see
   [docs/CLI.md](docs/CLI.md#content-based-auto-preset).
+- **Media-key control surface** — `pixpapers next` / `prev` / `play` /
+  `pause`: transport-agnostic aliases so a key binder (sxhkd, a niri
+  `bind`) drives the slideshow from transport keys without a D-Bus
+  service. `next`/`prev` are identical to `cycle 1`/`cycle -1`,
+  `play`/`pause` to `slideshow on`/`off`, and `status` shows the
+  position (`position: N / M`, plus `current_index`/`library_len` in
+  `--json`). Shipped in v0.4.0; evidence in
+  [docs/VERIFICATION.md](docs/VERIFICATION.md).
 - **waybar module** — `pixpapers bar` plus the ready-made module snippet
   in [`contrib/waybar/`](contrib/waybar/): click opens the TUI in a
   terminal, the wheel cycles wallpapers (up = next, down = previous,
