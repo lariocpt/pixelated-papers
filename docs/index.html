@@ -396,6 +396,48 @@ footer a { color: var(--fg-muted); }
       holds still when you ask for reduced motion.</p>
   </section>
 
+  <section id="media-keys" aria-label="Media-key control">
+    <h2><span class="h">##</span> media keys</h2>
+    <p>
+      Every thing a transport key wants is already a state-owning command, so
+      a key binder (sxhkd, a niri <code>bind</code>, keyboardctl) drives the
+      slideshow directly — <strong>no D-Bus MPRIS service</strong>.
+      <code>next</code>/<code>prev</code> are byte-identical to
+      <code>cycle&nbsp;1</code>/<code>cycle&nbsp;-1</code>;
+      <code>play</code>/<code>pause</code> are <code>slideshow on</code>/
+      <code>off</code>, so <code>pause</code> just persists “off” and
+      <code>play</code> resumes on the wall clock. Position is observable now:
+      <code>status&nbsp;--json</code> carries <code>current_index</code> +
+      <code>library_len</code>, so a poller renders an OSD by diffing two
+      snapshots — the same way keyboardctl’s <code>browserctl</code> player
+      already works.
+    </p>
+    <pre><code><span class="p">$ </span>pixpapers next       <span class="c"># = cycle 1</span>
+<span class="p">$ </span>pixpapers prev       <span class="c"># = cycle -1</span>
+<span class="p">$ </span>pixpapers play       <span class="c"># = slideshow on</span>
+<span class="p">$ </span>pixpapers pause      <span class="c"># = slideshow off</span>
+
+<span class="p">$ </span>pixpapers status --json
+{
+  …
+  "current": "c2138381",
+  <b>"current_index"</b>: 1,
+  <b>"library_len"</b>: 3,
+  …
+  "slideshow_enabled": true,
+  …
+}</code></pre>
+    <p class="fine">
+      A command surface, not a media player: there is no bus name and no
+      cover-art thumbnail in a GNOME/KDE widget — a key binder calls the CLI
+      and reads <code>status&nbsp;--json</code>. <code>next</code>/<code>prev</code>/
+      <code>play</code>/<code>pause</code> are CLI verbs, deliberately absent
+      from the TUI keymap. Excerpt captured from a real run over a hermetic
+      <code>PIXPAPERS_HOME</code> (the <code>…</code> is unchanged status
+      fields); see <a href="CLI.md#media-key-control-transport-agnostic">CLI.md</a>.
+    </p>
+  </section>
+
   <section aria-label="Where it runs">
     <h2><span class="h">##</span> where it runs</h2>
     <p>
