@@ -103,7 +103,7 @@ the same change.
 
 ## Deferred by decision, not by omission
 
-Still deferred: MPRIS-ish hooks, exact fractional buffers, headless-sway
+Still deferred: exact fractional buffers, headless-sway
 CI. Don't
 "helpfully" implement these without asking; they're v0.2+ scoped on
 purpose. (The blurred-bleed gutter shipped at 25f9a90 as `gutter-style
@@ -116,3 +116,15 @@ daemon never re-analyses). All three were on this list until they shipped.
 **slideshow** (`pixpapers slideshow`, render-time clock model) — but
 **animated/video** wallpaper sources stay deliberately deferred: there is
 no video-decoder dependency, the slideshow only cycles still images.)
+"MPRIS-ish hooks" split in two and were
+handled on numbers, not a hunch: the **media-key command surface shipped**
+(`pixpapers next`/`prev`/`play`/`pause` as aliases for `cycle ±1` /
+`slideshow on`/`off`, plus observable `current_index`+`library_len` in
+`status --json`), because a key binder can call the CLI directly and that
+covers the whole intent with ~9.5 KiB and no dependency. A real **D-Bus MPRIS
+service stays deliberately deferred**: a throwaway `zbus = "5"` probe grew the
+release binary ~20% for just a connection, pulled an async runtime against the
+daemon's single-threaded `poll(2)` posture, and needed Rust 1.87 vs this
+project's 1.85 MSRV — and its only real payoff (a cover thumbnail in a
+GNOME/KDE widget) is moot for a still-image renderer with no cover pipeline
+(see docs/plan/step-10.md).)

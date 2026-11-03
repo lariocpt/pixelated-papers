@@ -25,6 +25,8 @@ pixpapers -V | -h
 |---|---|
 | `set <ID>` | Make it the current wallpaper and apply now. **Auto-starts the daemon** when `WAYLAND_DISPLAY` or `DISPLAY` is set; without a session the config is still written (honest error note). |
 | `cycle [BY]` | Rotate the current pointer by N (default 1) through the library. |
+| `next` / `prev` | Media-key aliases for `cycle 1` / `cycle -1` — a **byte-identical** state transition (they route through the same `cycle_current` path, no separate code). For a key binder (sxhkd, a niri `bind`, keyboardctl) driving the slideshow from transport keys. |
+| `play` / `pause` | Media-key aliases for `slideshow on` / `slideshow off`. There is **no in-daemon pause flag**: `pause` persists slideshow-off, and `play` re-derives the active wallpaper from the wall clock, so resuming mid-slot lands on that slot (no frozen epoch). |
 | `enable` / `disable` | Global pixelation policy. `disable` = render originals only (placement/bg still honored). No other way to escape pixelation except per-wallpaper `pixel normal`. |
 | `stop` | Ask the running daemon to quit (IPC `Quit`). Surfaces, socket and pidfile are removed. |
 
@@ -117,11 +119,34 @@ A still-image slideshow cycling the library's entries in `list` order. State is 
 
 TOML (`config.toml`): `[slideshow]` with `enabled` (bool, default `false`) and `interval_secs` (u64, default `300`). `status` prints `slideshow: on · next change in Ns` (and `status --json` gains `slideshow_enabled` + `next_change`) only while it is on — the off output is unchanged. Only **still** images cycle; animated/video sources are out of scope (no decoder dependency).
 
+## Media-key control (transport-agnostic)
+
+The transport verbs a media key needs are already state-owning CLI commands,
+so a key binder drives the slideshow directly — **no D-Bus MPRIS service**
+(see [docs/plan/step-10.md](plan/step-10.md) for why a bus service was measured
+and deferred):
+
+| Media key | Command | What it does |
+|---|---|---|
+| Next | `pixpapers next` | `cycle 1` — byte-identical state transition. |
+| Previous | `pixpapers prev` | `cycle -1` — byte-identical state transition. |
+| Play | `pixpapers play` | `slideshow on` — resumes by wall clock (lands on the current slot). |
+| Pause | `pixpapers pause` | `slideshow off` — persists off; there is no in-daemon pause flag. |
+| Stop | `pixpapers stop` | Ask the running daemon to quit (same as `stop`). |
+
+Because position is now observable (`status --json` gains `current_index` +
+`library_len`, and `status` prints a 1-based `position: N / M`), a poller like
+[keyboardctl](https://github.com/r0rig/keyboardctl) renders the OSD by
+diffing two `status --json` snapshots — the same pattern its `browserctl`
+player already follows. `next`/`prev`/`play`/`pause` deliberately stay **out
+of the TUI keymap** (they are CLI verbs, not interactive keys). Proven in
+`crates/pixpapers/tests/media_keys.rs`.
+
 ## Diagnostics & offline
 
 | Command | Meaning |
 |---|---|
-| `status [--json] [--bench]` | Daemon truth when running (pid, outputs with live render label, enabled policy); filesystem view otherwise. The label is `{pixel}/{placement}-{palette}[-{dither}]` — e.g. `16/fit-auto`, `16/fit-vga-fs` — the same tokens as the variant cache key (the dither segment is omitted when `none`). For an `auto` entry the label's pixel slot names the preset resolved for that output (e.g. `32/fit-auto` on a 4K screen), so text and `--json` both show the look actually on screen. `--bench` adds self-timed switch/render latencies, variant-cache hit rate, RSS + fd count. |
+| `status [--json] [--bench]` | Daemon truth when running (pid, outputs with live render label, enabled policy); filesystem view otherwise. `--json` always reports `library_len` (the entry count) and, when a current entry exists, `current_index` (its **0-based** position in `list` order — both are additive and skip-if-absent, so an old client ignores them and a `current_index` of `0` stays distinct from "nothing set"); the human view prints the same as a 1-based `position: N / M` line. The label is `{pixel}/{placement}-{palette}[-{dither}]` — e.g. `16/fit-auto`, `16/fit-vga-fs` — the same tokens as the variant cache key (the dither segment is omitted when `none`). For an `auto` entry the label's pixel slot names the preset resolved for that output (e.g. `32/fit-auto` on a 4K screen), so text and `--json` both show the look actually on screen. `--bench` adds self-timed switch/render latencies, variant-cache hit rate, RSS + fd count. |
 | `bar` | One line for a bar — the [waybar module's](contrib/waybar/README.md) text source. Character-exact: `▞ <title> · <pixel>/<placement-short>` while a current entry exists (even with the daemon dead — config+manifest truth through the daemon's own resolution chain, so the label never shows a look the daemon would not render), `▞ pixpapers — set one` with no entry and the daemon alive, `▞ pixpapers · daemon down` with the socket dead. Always exactly one line, always exit 0 (waybar's custom module auto-hides on empty output or a non-zero exit, so the module can never blink). Never writes, never spawns; works offline. |
 | `export <ID> <WxH> [--pixel P] [--placement PL] [--bg C] [--gutter N] [--gutter-style ST] [--palette M] [--dither D] [-o OUT]` | Offline render to PNG using the daemon's exact composite path — a preview that cannot lie. No daemon needed. `--palette`/`--dither`/`--gutter-style` override this render only (never persisted). `--pixel` accepts `auto` and `auto-content` too: `auto` resolves against the requested `WxH` (the daemon's exact rule), `auto-content` clamps the entry's *persisted* content density against that same size floor (export never re-measures the picture — with no probe it equals `auto`); the wrote-line shows `auto→N` / `auto-content→N` and the default filename carries the concrete preset. Named modes write a palette PNG (PLTE = the table deduped by first occurrence, a transparent placeholder at index 0, and the bg colour merged in when absent); `off`/`auto` stay plain RGBA. |
 | `optimize [--all]` | Re-run the storage optimizer (PNG re-encode / strip cruft) over the library; `--all` includes entries unchanged since import. |

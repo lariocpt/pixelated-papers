@@ -53,6 +53,12 @@ user unit in [`contrib/`](contrib/).
   to stop / retune). The active one is derived from the wall clock at
   render time, so the daemon keeps owning no state. Still images only —
   no video decoding.
+- **Media-key control**: `pixpapers next` / `prev` / `play` / `pause` are
+  transport-agnostic aliases (`cycle ±1` and `slideshow on`/`off`) so sxhkd, a
+  niri `bind` or keyboardctl can drive the slideshow from transport keys, and
+  `status --json` exposes `current_index` + `library_len` so a poller can render
+  position. This is a **command surface, not a D-Bus media player** — there is
+  no MPRIS service; a key binder calls the CLI directly.
 - Originals are stored; the pixelated variants are generated at the
   **absolute minimum size** — the default look is ~6 KB, not ~2 MB — and
   cached on disk forever. Switching a cached wallpaper is a read + a stretch.
@@ -172,7 +178,12 @@ landed in is in [CHANGELOG.md](CHANGELOG.md).)
   *size* only and stays byte-for-byte unchanged; you opt into reading the
   picture explicitly with the separate `auto-content` token (above). The
   tool never surprises you by re-picking a look you didn't ask for.
-- **MPRIS-ish hooks** — no media-stack integration.
+- **A D-Bus MPRIS service** — media keys are served by the CLI aliases above
+  (a key binder calls `pixpapers` directly), not by a bus name. A real MPRIS
+  service buys a cover-art thumbnail in a GNOME/KDE media widget, which a
+  still-image renderer with no cover pipeline doesn't need; measured, a `zbus`
+  dependency added ~20% to the release binary and broke MSRV, so it stays out
+  (see [docs/plan/step-10.md](docs/plan/step-10.md)).
 - **Exact fractional buffers** (viewporter/fractional-scale) — a separate
   track; current buffer sizing covers everything the tested matrix uses.
 

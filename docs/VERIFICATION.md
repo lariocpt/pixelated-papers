@@ -1216,3 +1216,110 @@ KB), 0 images missing dimensions, 0 problems.
   was moved from "Deliberately not in v0.2" to a shipped `auto-content` bullet,
   and the "not included" list now states plain `auto` stays size-only while
   `auto-content` is the explicit opt-in.
+
+## Media-key control surface (2026-11-03, this change)
+
+The AGENTS.md "Deferred by decision" item **MPRIS-ish hooks** split into two
+interpretations and was decided on numbers, not a hunch:
+
+- **Interpretation B — a transport-agnostic command surface — SHIPPED.**
+  `pixpapers next` / `prev` / `play` / `pause` are aliases so a key binder
+  (sxhkd, a niri `bind`, keyboardctl) drives the slideshow from transport keys
+  with **no new runtime dependency**, plus observable position
+  (`status --json` → `current_index` + `library_len`; human `status` → a
+  1-based `position: N / M` line). This was chosen because every media verb is
+  already a pure state-owning CLI command — the only genuinely missing pieces
+  were the named verbs and observable position, both additive.
+- **Interpretation A — a real D-Bus MPRIS service (`zbus`) — stays deferred,
+  measured.** The decision and full probe are in
+  [docs/plan/step-10.md](plan/step-10.md); the measured numbers are below.
+
+### The `zbus` footprint probe (throwaway, HEAD `36c8db6`, MSRV 1.85)
+
+`zbus = "5"` behind a default-**off** `mpris` feature, `--release`, `lto=true`:
+
+| Measurement | Result |
+|---|---|
+| Dependency-tree nodes, feature OFF | 289 |
+| Dependency-tree nodes, feature ON | 429 (**+140**, ~135 new packages) |
+| Release binary, feature OFF | `4f9bb498…`, 5,145,752 B — **byte-identical** to the pre-probe baseline, proving the entire ON delta is `zbus`, not the probe code |
+| Release binary, feature ON | 6,206,808 B (**+1,061,056 B, ≈ +20%**) |
+| What that +20% bought | a *connection probe only* — no UI, no object path served |
+| Toolchain | `zbus 5.13.2` needs Rust **1.87** vs this project's **1.85** MSRV (**+2 versions**) |
+| Architecture | pulls `async-io` / `async-executor` / `futures-lite` / `event-listener` — a reactor that collides with the daemon's deliberate single-threaded, no-tokio `poll(2)` posture |
+
+Rejected on those numbers: the size/MSRV/architecture costs are all real, and
+the sole payoff a bus name buys (a cover-art thumbnail in a GNOME/KDE widget)
+is moot for a still-image renderer with no cover pipeline. The probe crate was
+deleted; nothing from it is in the shipped tree.
+
+### What B actually added, measured
+
+Default (`--release`, no features) release binary: baseline 5,145,752 B →
+**5,155,480 B** (`sha256 e18a999ed6b0…`) = **+9,728 B (~9.5 KiB)** for the
+four verbs + two observable fields.
+
+### Proofs run (hermetic `PIXPAPERS_HOME`, no live display)
+
+A real library (3 entries, generated PNGs) drove the actual release binary
+with `WAYLAND_DISPLAY`/`DISPLAY` unset (so the daemon refuses to spawn — see
+"Not run"), and state still recorded correctly:
+
+- `slideshow on` → `slideshow_enabled: true`; `pause` → `slideshow_enabled:
+  false` — **Play/Pause ↔ slideshow on/off** confirmed through the JSON face.
+- `next` → `current: c2138381`, `current_index: 1`, `library_len: 3`; `prev` →
+  `current_index: 0`; the `… → <id> · <title> (recorded …)` notes match the
+  `cycle` path — **Next/Previous byte-identical to `cycle ±1`**.
+- `current_index` is **0-based** in `--json`; the human `status` printed
+  `position: 1 / 3` (1-based). With a library but no current entry,
+  `library_len` is present and `current_index` is **absent** (not `0`), so a
+  "nothing set" state stays distinguishable from "index 0".
+- Backward compatibility: the two new `--json` fields are additive,
+  skip-if-absent (`serde skip_serializing_if`), so an old client ignores them —
+  covered by an extended `ipc::tests` round-trip.
+
+`crates/pixpapers/tests/media_keys.rs` (new, 10 tests) asserts all of the above
+end-to-end in a hermetic `PIXPAPERS_HOME`: the four verbs round-trip through
+`status --json`, Next/Previous equal `cycle ±1`, Play/Pause flip `slideshow`,
+stale/degraded behaves like the existing commands, and stale/degraded daemon
+states surface like existing verbs.
+
+### Gates run
+
+`cargo build --release` clean · `cargo test --workspace` green (**210** =
+116 pixcore + 74 pixpapers bin + 10 slideshow + 10 media_keys) ·
+`cargo test --workspace --features gui` green (**215**, +5 `gui::model`) ·
+`clippy --workspace --all-targets --all-features -- -D warnings` clean ·
+`cargo fmt --all --check` clean · `env -u WAYLAND_DISPLAY test/smoke.sh` ok ·
+`test/verify-x11.sh` ok · `test/verify-tui.sh` ok — and the four new top-level
+verbs deliberately stay **out** of the TUI keymap, so the TUI keymap is
+unchanged (verify-tui leaks no B-knob keys).
+
+### Website (`docs/index.html`, one file)
+
+Added an `#media-keys` section (after `#slideshow`) — **text + one `<pre>`
+excerpt only, zero new images and zero new CSS** (existing classes/vars). The
+excerpt is a **real** `pixpapers status --json` capture over the hermetic home
+above (`current_index: 1`, `library_len: 3`, `slideshow_enabled: true`; the
+`…` is unchanged status fields, labelled as such in the caption). **No
+`playerctl` transcript** — Interpretation A did not ship, so a bus-client
+session would have been fabricated. Re-verified after the edit: `web_check` @
+360 px → **0 console errors, 0 failed requests**; `web_find_overflows` @
+360/400/720/1080 → **0 overflow**; `web_performance` @ 1440 →
+`horizontal_overflow: 0`, **0 images over 300 KB**, 0 images missing
+dimensions, 0 problems. `requests_total: 11` (1 document + 10 same-origin
+`img/*.png`) confirms **zero external-origin fetches** — the `github.com` /
+`crates.io` entries the checker lists are `<a href>` anchor destinations, not
+subresources. Palette unchanged (CSS vars), favicon `data:` URI untouched,
+motion unchanged (this section is not animated).
+
+### Not run / deferred
+
+- **No D-Bus / `playerctl` transcript.** B is a command surface, not a bus
+  service; there is nothing to transcript. A (real MPRIS over `zbus`) remains
+  deferred on the measured numbers above.
+- **No live-desktop render.** Captures ran headless (no `WAYLAND_DISPLAY` /
+  `DISPLAY` in scope) so the daemon refuses to spawn and never touches the
+  maintainer's wallpaper — position/slideshow state is a filesystem fact the
+  CLI owns, which is exactly the design.
+- The full **vision test rig** was not run (this change adds no imagery).

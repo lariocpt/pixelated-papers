@@ -41,6 +41,29 @@ Semantic Versioning. The build log behind each area lives in
   [docs/VERIFICATION.md](docs/VERIFICATION.md#content-based-auto-preset);
   user docs in [docs/CLI.md](docs/CLI.md#content-based-auto-preset). This is
   the AGENTS.md "Deferred by decision" item, built on explicit request.
+- **Media-key control surface** — `pixpapers next` / `prev` / `play` / `pause`
+  as transport-agnostic aliases so a key binder (sxhkd, a niri `bind`,
+  keyboardctl) drives the slideshow from transport keys **without a D-Bus
+  MPRIS service**. `next`/`prev` are byte-identical to `cycle 1`/`cycle -1`
+  (same `cycle_current` path); `play`/`pause` are `slideshow on`/`off`. The
+  daemon stays a pure renderer — there is **no in-daemon pause flag**: `pause`
+  persists slideshow-off and `play` re-derives the active wallpaper from the
+  wall clock (resume lands on the current slot, no frozen epoch). Position is
+  now observable: `status --json` gains additive, skip-if-absent `current_index`
+  (0-based) + `library_len`, and `status` prints a 1-based `position: N / M`
+  line, so a poller renders an OSD by diffing two snapshots (the pattern
+  keyboardctl's `browserctl` already uses). **A real D-Bus MPRIS service
+  (zbus) stays deferred and measured, not hand-waved:** a throwaway probe
+  (`zbus = "5"` behind an off feature, `--release`) grew the tree
+  289 → 429 nodes (+140), added **+1,061,056 B / ~20%** to the release binary
+  for just a connection probe, pulled an async-io/futures reactor against the
+  daemon's single-threaded `poll(2)` posture, and zbus 5.13.2 needs Rust 1.87
+  vs this project's MSRV 1.85 — all rejected on numbers. The B surface adds
+  9,728 B (~9.5 KiB) to the default release binary. Tests in
+  `crates/pixpapers/tests/media_keys.rs`; decision and measurements in
+  [docs/plan/step-10.md](docs/plan/step-10.md); user docs in
+  [docs/CLI.md](docs/CLI.md#media-key-control-transport-agnostic). No new
+  runtime dependency.
 
 
 ### Added
