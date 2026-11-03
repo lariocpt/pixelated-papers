@@ -285,11 +285,12 @@ fn backfill_inherited_probes(paths: &Paths) -> Result<()> {
     let mut lib = Library::load(paths).context("load library")?;
     let mut changed = false;
     for e in &mut lib.entries {
-        if e.settings.pixel.is_none() && e.settings.content.is_none() {
-            if let Some(probe) = content_probe_for(paths, &e.id) {
-                e.settings.content = Some(probe);
-                changed = true;
-            }
+        if e.settings.pixel.is_none()
+            && e.settings.content.is_none()
+            && let Some(probe) = content_probe_for(paths, &e.id)
+        {
+            e.settings.content = Some(probe);
+            changed = true;
         }
     }
     if changed {

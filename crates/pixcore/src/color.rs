@@ -45,12 +45,11 @@ impl FromStr for RgbCss {
             if let (Some(r), Some(g), Some(b)) = (exp(chars[0]), exp(chars[1]), exp(chars[2])) {
                 return Ok(RgbCss([r, g, b]));
             }
-        } else if hex.len() == 6 {
-            if let (Some(r), Some(g), Some(b)) =
+        } else if hex.len() == 6
+            && let (Some(r), Some(g), Some(b)) =
                 (decode(&hex[0..2]), decode(&hex[2..4]), decode(&hex[4..6]))
-            {
-                return Ok(RgbCss([r, g, b]));
-            }
+        {
+            return Ok(RgbCss([r, g, b]));
         }
         Err(PixError::Invalid(format!(
             "color must be #rgb or #rrggbb (got {s:?})"

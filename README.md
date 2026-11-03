@@ -91,9 +91,10 @@ palette/dither rows come from `test/bench-sizes.sh` and
 
 ## Install
 
-- **From crates.io**: `cargo install pixpapers` (stable toolchain ≥ 1.85;
-  the `x11` and `tui` features are on by default —
-  `--no-default-features` for a wayland-only slim build).
+- **From crates.io**: `cargo install pixpapers` (stable toolchain ≥ 1.88,
+  enforced by CI; the `x11` and `tui` features are on by default —
+  `--no-default-features` for a wayland-only slim build. The opt-in `gui`
+  feature needs ≥ 1.95 — eframe 0.37's own floor).
 - **Arch**: PKGBUILD draft in [`contrib/packaging/`](contrib/packaging).
 - **From a clone**: `cargo install --path crates/pixpapers` — or
   `cargo build --release` and drop `target/release/pixpapers` on your PATH.

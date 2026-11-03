@@ -1490,6 +1490,93 @@ older than its fractional-scale support — behavior is the unchanged v0.2 path.
   the 1.0/2.0 container cases.
 - **Multi-output** remains structurally handled, untested on real hardware
   (unchanged caveat; the container testbed is single-output).
-- **headless-sway CI**: the wiring of `test/verify-wayland-fractional.sh`
-  into CI is the remaining deferred step; the testbed it needs is now
-  committed.
+- **headless-sway CI**: shipped after this section — the `compositor` job
+  wired all three headless gates into CI; see "CI compositor gates" below.
+
+## MSRV honesty — 1.85 → 1.88 (measured, CI-enforced) (2026-11-03, this change)
+
+The declared floor was a lie: `rust-version = "1.85"` while the resolved
+lockfile cannot build on 1.85 (the caveat the fractional-buffers section
+above recorded). One honest option had to ship. **Chosen: raise the claim
+to the measured floor, 1.88, and enforce it in CI.**
+
+### The bisect (real toolchains, this lockfile, `--locked`)
+
+| Toolchain | `cargo build --locked --workspace` (default features) |
+|---|---|
+| 1.85.1 | **refused** — `image@0.25.10`, `ratatui@0.30.2` (+`ratatui-core`/`-crossterm`/`-widgets`), `time@0.3.55`, `time-core@0.1.9` require rustc 1.88.0 |
+| 1.86.0 | **refused** — same seven packages |
+| 1.87.0 | **refused** — same seven packages |
+| **1.88.0** | **green** — `Finished` dev profile, no warnings |
+
+The `gui` feature's own floor, measured the same way
+(`cargo check --locked -p pixpapers --features gui`):
+
+| Toolchain | gui feature |
+|---|---|
+| 1.94.0 | **refused** — `eframe`/`egui`/`ecolor`/`egui-winit`/`egui_glow` 0.37.0 require rustc 1.95 |
+| 1.95.0 | **green** — `Finished` dev profile |
+
+### Why "downgrade back to 1.85" was measured infeasible, not waved away
+
+- `ratatui` **0.30.0**, the oldest of the 0.30 line the TUI is built
+  against, already declares `rust-version` **1.86** (crates.io API) — the
+  whole line is above 1.85; reaching 1.85 means rewriting the TUI against
+  0.29, not `--precise`-ing a patch.
+- `egui` 0.37 (the `gui` feature) depends on `image ^0.25.10` (crates.io
+  dependency API) — the lockfile can **never** resolve an `image` below
+  the 1.88-declaring 0.25.10 while `gui` is a workspace feature. This is
+  the same constraint AGENTS.md already records for the 0.25.9→0.25.10
+  bump.
+- `time` (pulled by `ratatui-widgets`) declares 1.88 across 0.3.51–0.3.55.
+
+So option (a) was a TUI+GUI rewrite dressed as a `cargo update`; option
+(b) is the honest number. Dev-only tooling stays under the floor
+(`criterion` 0.8.2 declares 1.86 ≤ 1.88).
+
+### What shipped
+
+- `rust-version = "1.88"` in the workspace `Cargo.toml` (both crates
+  inherit); README install line now says **≥ 1.88** and names the `gui`
+  feature's 1.95 floor; AGENTS.md's historical 1.85 mentions are marked
+  as then-declared.
+- A `msrv` CI job that **reads the claim from Cargo.toml** and pins that
+  toolchain for `cargo build --locked --workspace` — hard-fail. The job
+  cannot drift from the claim because it parses it; a dependency bump
+  that raises the true floor turns CI red and forces claim + mentions to
+  move together. First runs recorded in the CI section below.
+
+### The bump's own tax: MSRV-aware clippy lints fired (and were paid)
+
+Raising the declared floor to 1.88 unlocked clippy's MSRV-aware lints —
+with let-chains (1.88) and `u32::is_multiple_of` (1.87) now legal at the
+floor, `collapsible_if` and `manual_is_multiple_of` fired across the
+tree: **20 call sites** (pixcore: color/paths/pipeline/content/variant;
+pixpapers: commands/layer/gui-model/status/tui-actions). All collapsed
+mechanically per clippy's own suggestions; `clippy --all-targets
+--all-features -D warnings` green again, and the new let-chain code
+compiles on the real 1.88 toolchain (re-verified after the edits).
+
+## CI compositor gates — design + graduation criterion (2026-11-03, this change)
+
+The `compositor` job (`.github/workflows/ci.yml`) runs on every push/PR
+in parallel with the untouched fast `check` job:
+
+| Gate | Environment | Status at ship |
+|---|---|---|
+| `test/verify-tui.sh` | plain runner, real pty | soft-fail (continue-on-error) |
+| `test/verify-x11.sh` | Xvfb, **depth pinned 24-bit** — the script self-wraps `xvfb-run -s "-screen 0 1280x1024x24"`; the workflow greps that pin so a silent fallback to a runner default fails loudly (depth 16 refuses the truecolor backend — the script's own test 6) | soft-fail (continue-on-error) |
+| `test/verify-wayland-fractional.sh` | Docker, sway 1.12 headless; image layers cached with buildx `gha` cache (`docker/build-push-action`, `load: true`); `PIXPAPERS_IMAGE_BUILT=1` makes the script use the pre-loaded image instead of rebuilding | soft-fail (continue-on-error) |
+| `msrv` job | pinned toolchain read from Cargo.toml | **hard-fail** |
+
+`PIXPAPERS_BASELINE_BIN` is deliberately unset in CI: the legacy+RSS pair
+needs a pre-feature binary and CI does not rebuild old commits — the
+script skips that sub-step by design (its output says so).
+
+**Graduation criterion (written down, MUST-CARRY comments in the
+workflow):** a soft-fail compositor gate graduates to hard-fail after
+**5 consecutive green compositor jobs on main**. Each MUST-CARRY comment
+is removed in the commit that graduates its gate.
+
+First-run evidence (run URLs + per-job statuses) is appended to this
+section once the first CI cycles land.

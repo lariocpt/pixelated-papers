@@ -89,10 +89,10 @@ pub fn print_report(r: &StatusReport, cfg: &Config, json: bool) {
     println!("current:  {}", r.current.as_deref().unwrap_or("(none)"));
     // "track N of M" position — only when a current entry sits in the library
     // (media-widget metadata). 1-based for humans; the JSON stays 0-based.
-    if let (Some(idx), Some(len)) = (r.current_index, r.library_len) {
-        if len > 0 {
-            println!("position: {} / {}", idx + 1, len);
-        }
+    if let (Some(idx), Some(len)) = (r.current_index, r.library_len)
+        && len > 0
+    {
+        println!("position: {} / {}", idx + 1, len);
     }
     // When the current wallpaper resolves an `auto`/`auto-content` pixel, name
     // the concrete preset the daemon renders (only present with a live daemon).

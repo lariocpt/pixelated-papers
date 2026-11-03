@@ -77,10 +77,10 @@ fn expand_tilde(s: &str) -> PathBuf {
     if s == "~" {
         return dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
     }
-    if let Some(rest) = s.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest);
-        }
+    if let Some(rest) = s.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest);
     }
     Path::new(s).to_path_buf()
 }

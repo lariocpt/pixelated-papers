@@ -39,3 +39,87 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install --path crates/pixpapers --locked
       - run: pixpapers --version && pixpapers status; test $? -le 2
+  # Compositor gates in a parallel job so the wall-clock of `check` stays
+  # where it was (~3 min). Container-bound work is soft-fail at first, per
+  # the cargo-deny precedent above ("soft-fail until it earns hard-fail").
+  compositor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p pixpapers
+      - name: install compositor test tooling
+        run: |
+          set -eu
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              xvfb imagemagick x11-xserver-utils python3-xlib
+      # MUST-CARRY: soft-fail until it earns hard-fail — graduate to a
+      # hard gate after 5 consecutive green compositor jobs on main
+      # (recorded graduation criterion, docs/VERIFICATION.md "CI
+      # compositor gates"). Remove this comment when it graduates.
+      - name: verify-tui — TUI on a real pty (headless)
+        continue-on-error: true
+        run: test/verify-tui.sh target/release/pixpapers
+      # MUST-CARRY: soft-fail until it earns hard-fail — graduate to a
+      # hard gate after 5 consecutive green compositor jobs on main
+      # (recorded graduation criterion, docs/VERIFICATION.md "CI
+      # compositor gates"). Remove this comment when it graduates.
+      - name: verify-x11 — Xvfb, screen depth pinned to 24-bit
+        # The runner's default screen depth is NOT trusted: a 16-bit root
+        # makes the truecolor x11 backend exit 1 (verify-x11.sh test 6
+        # asserts that refusal). The script self-wraps in
+        # `xvfb-run -s "-screen 0 1280x1024x24"`; this grep pins the
+        # workflow to that contract — if the depth pin ever disappears,
+        # CI fails here instead of silently testing at a runner default.
+        continue-on-error: true
+        run: |
+          set -eu
+          grep -q 'screen 0 1280x1024x24' test/verify-x11.sh \
+              || { echo "verify-x11.sh lost its Xvfb depth-24 pin"; exit 1; }
+          test/verify-x11.sh target/release/pixpapers
+      # Layer-cached so repeat runs don't rebuild Arch + sway (pacman layer
+      # is reused while the Dockerfile is unchanged). load: true puts the
+      # image in the docker daemon under the tag the script expects;
+      # PIXPAPERS_IMAGE_BUILT then makes the script use it instead of
+      # rebuilding. PIXPAPERS_BASELINE_BIN is deliberately NOT set: the
+      # legacy+RSS pair needs a pre-feature binary and CI does not rebuild
+      # old commits — the script skips that sub-step, as designed.
+      - name: build headless-sway image (gha layer cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: test/wayland-fractional
+          tags: pixpapers-wayland-fractional:latest
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # MUST-CARRY: soft-fail until it earns hard-fail — graduate to a
+      # hard gate after 5 consecutive green compositor jobs on main
+      # (recorded graduation criterion, docs/VERIFICATION.md "CI
+      # compositor gates"). Arch mirror fetches can flake runner-side;
+      # keep soft until the record says otherwise. Remove this comment
+      # when it graduates.
+      - name: verify-wayland-fractional — headless sway in Docker
+        continue-on-error: true
+        env:
+          PIXPAPERS_IMAGE_BUILT: "1"
+        run: test/verify-wayland-fractional.sh target/release/pixpapers
+  # Enforces the rust-version claim in Cargo.toml — an unenforced claim is
+  # how the 1.85 drift happened (docs/VERIFICATION.md "MSRV honesty").
+  # The toolchain is read from the claim itself, so the job can never
+  # drift from what is declared. Hard-fail: a dependency bump that raises
+  # the true floor must turn CI red and force the claim (and every
+  # mention of it) to move together.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: resolve the declared floor
+        id: msrv
+        run: echo "version=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --workspace

@@ -15,7 +15,7 @@ env -u WAYLAND_DISPLAY test/smoke.sh        # offline layer (CI-safe, determinis
 WAYLAND_DISPLAY=wayland-1 test/verify-live.sh target/release/pixpapers
 test/verify-x11.sh target/release/pixpapers # x11 layer under Xvfb (self-wraps; skips by name)
 test/verify-tui.sh target/release/pixpapers # TUI on a real pty (headless env)
-test/verify-wayland-fractional.sh target/release/pixpapers # headless-sway fractional buffers in Docker (skips without Docker; PIXPAPERS_BASELINE_BIN adds the legacy+RSS pair)
+test/verify-wayland-fractional.sh target/release/pixpapers # headless-sway fractional buffers in Docker (skips without Docker; PIXPAPERS_BASELINE_BIN adds the legacy+RSS pair; PIXPAPERS_IMAGE_BUILT=1 uses a pre-loaded image — CI)
 WAYLAND_DISPLAY=wayland-1 test/verify-waybar.sh
 WAYLAND_DISPLAY=wayland-1 test/bench-daemon.sh target/release/pixpapers 25
 ```
@@ -104,12 +104,16 @@ the same change.
 
 ## Deferred by decision, not by omission
 
-Still deferred: headless-sway
-CI (the committed `test/verify-wayland-fractional.sh` container testbed
-now bootstraps exactly that — an image + one script, skipped-with-message
-without Docker — so wiring it into CI is the remaining step). Don't
-"helpfully" implement the rest of these without asking; they're v0.2+
-scoped on purpose. **Exact fractional buffers shipped** after it was
+**Headless-sway CI shipped**: the `compositor` job in
+`.github/workflows/ci.yml` runs `verify-tui.sh`, `verify-x11.sh` (Xvfb,
+depth pinned to 24-bit) and `verify-wayland-fractional.sh` (Docker,
+layer-cached sway image) on every push/PR; the `msrv` job enforces the
+`rust-version` claim with a pinned toolchain. All three compositor
+gates are currently **soft-fail** (continue-on-error, MUST-CARRY
+comments) — graduation to hard-fail after 5 consecutive green
+compositor jobs on main (criterion + status in docs/VERIFICATION.md).
+Don't "helpfully" implement the rest of these without asking; they're
+v0.2+ scoped on purpose. **Exact fractional buffers shipped** after it was
 asked for: viewporter + fractional-scale engaged when both exist and the
 scale is fractional, legacy integer path byte-for-byte unchanged
 otherwise; proven in the headless-sway container (exact 3840×2160 buffer
@@ -134,6 +138,8 @@ covers the whole intent with ~9.5 KiB and no dependency. A real **D-Bus MPRIS
 service stays deliberately deferred**: a throwaway `zbus = "5"` probe grew the
 release binary ~20% for just a connection, pulled an async runtime against the
 daemon's single-threaded `poll(2)` posture, and needed Rust 1.87 vs this
-project's 1.85 MSRV — and its only real payoff (a cover thumbnail in a
+project's then-declared 1.85 MSRV (the claim has since moved to the
+measured 1.88 floor, CI-enforced — see docs/VERIFICATION.md) — and its
+only real payoff (a cover thumbnail in a
 GNOME/KDE widget) is moot for a still-image renderer with no cover pipeline
 (see docs/plan/step-10.md).)

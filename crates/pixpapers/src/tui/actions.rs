@@ -218,10 +218,10 @@ fn expand_tilde(s: &str) -> PathBuf {
     if s == "~" {
         return dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
     }
-    if let Some(rest) = s.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest);
-        }
+    if let Some(rest) = s.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest);
     }
     Path::new(s).to_path_buf()
 }
@@ -229,10 +229,10 @@ fn expand_tilde(s: &str) -> PathBuf {
 /// The export destination directory: `$XDG_DOWNLOAD_DIR` (tilde-expanded)
 /// when non-empty, else `~/Downloads`, else `.` (no home).
 fn download_dir() -> PathBuf {
-    if let Some(v) = std::env::var_os("XDG_DOWNLOAD_DIR") {
-        if !v.is_empty() {
-            return expand_tilde(&v.to_string_lossy());
-        }
+    if let Some(v) = std::env::var_os("XDG_DOWNLOAD_DIR")
+        && !v.is_empty()
+    {
+        return expand_tilde(&v.to_string_lossy());
     }
     dirs::home_dir()
         .map(|h| h.join("Downloads"))
@@ -585,11 +585,11 @@ fn do_export(app: &mut App) {
         "pixpapers-{}-{}-{}-{}x{}.png",
         entry.id, r.pixel, r.placement, canvas.0, canvas.1
     ));
-    if let Some(parent) = dest.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            app.last = format!("export failed: cannot create {}: {e}", parent.display());
-            return;
-        }
+    if let Some(parent) = dest.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        app.last = format!("export failed: cannot create {}: {e}", parent.display());
+        return;
     }
     let (res, _out) = with_quiet(|| {
         commands::export(

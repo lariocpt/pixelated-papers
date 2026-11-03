@@ -52,8 +52,8 @@ pub fn downscale(src: &RgbaImage, tw: u32, th: u32) -> RgbaImage {
     // 2×2 box average). One dim may still be larger — the final box handles it.
     while cur.width() / 2 >= tw
         && cur.height() / 2 >= th
-        && cur.width() % 2 == 0
-        && cur.height() % 2 == 0
+        && cur.width().is_multiple_of(2)
+        && cur.height().is_multiple_of(2)
     {
         cur = box_halve(&cur);
     }

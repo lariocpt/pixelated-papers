@@ -613,12 +613,12 @@ impl Gui {
 fn variant_width(path: &Path) -> Option<u32> {
     let stem = path.file_stem()?.to_str()?;
     for tok in stem.split('-') {
-        if let Some((w, h)) = tok.split_once('x') {
-            if let (Ok(w), Ok(h)) = (w.parse::<u32>(), h.parse::<u32>()) {
-                if w > 0 && h > 0 {
-                    return Some(w);
-                }
-            }
+        if let Some((w, h)) = tok.split_once('x')
+            && let (Ok(w), Ok(h)) = (w.parse::<u32>(), h.parse::<u32>())
+            && w > 0
+            && h > 0
+        {
+            return Some(w);
         }
     }
     None
@@ -629,10 +629,10 @@ pub fn expand_tilde(s: &str) -> PathBuf {
     if s == "~" {
         return dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
     }
-    if let Some(rest) = s.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest);
-        }
+    if let Some(rest) = s.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest);
     }
     PathBuf::from(s)
 }

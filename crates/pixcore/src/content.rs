@@ -181,7 +181,7 @@ mod tests {
         let cell = cell.max(1);
         let mut img = RgbaImage::new(w, h);
         for (x, y, p) in img.enumerate_pixels_mut() {
-            let v = if ((x / cell) + (y / cell)) % 2 == 0 {
+            let v = if ((x / cell) + (y / cell)).is_multiple_of(2) {
                 255
             } else {
                 0

@@ -140,6 +140,43 @@ Semantic Versioning. The build log behind each area lives in
   website (`docs/index.html`), with the gutter magnified and the ring-vs-centre
   pixel difference computed live in the browser from the demo images.
 
+### Changed
+- **MSRV claim raised 1.85 → 1.88 (measured, CI-enforced).** The declared
+  floor had drifted: the resolved lockfile cannot build on 1.85 — bisected
+  with real toolchains on this lockfile: **1.85.1 / 1.86.0 / 1.87.0 all
+  refuse** (`image 0.25.10`, `ratatui 0.30.2` + family, `time 0.3.55`
+  declare `rust-version` 1.88.0), **1.88.0 builds green**
+  (`cargo +1.88.0 build --locked --workspace`). Downgrading to 1.85 was
+  measured infeasible, not untried: the whole `ratatui` 0.30 line declares
+  ≥ 1.86 (0.30.0 → 1.86), and `egui` 0.37 (the `gui` feature) requires
+  `image ^0.25.10`, so the lockfile can never resolve an image below the
+  1.88-declaring 0.25.10. The `gui` feature's own floor is **1.95**
+  (eframe 0.37 declares it; 1.94 refuses, 1.95 checks green). A new `msrv`
+  CI job pins the toolchain **read from the Cargo.toml claim itself** and
+  builds `--locked --workspace` — an unenforced claim is how the drift
+  happened. The honest floor also unlocked clippy's MSRV-aware lints
+  (let-chains at 1.88, `is_multiple_of` at 1.87): 20 call sites collapsed
+  per clippy's own suggestions, clippy green again.
+  Measurements in [docs/VERIFICATION.md](docs/VERIFICATION.md#msrv-honesty--185--188-measured--ci-enforced).
+
+### CI
+- **Compositor gates on every push/PR** — a parallel `compositor` job in
+  `.github/workflows/ci.yml` (the fast `check` job is untouched):
+  `test/verify-tui.sh` headless, `test/verify-x11.sh` under Xvfb with the
+  screen depth pinned to 24-bit (the workflow greps the script's
+  `1280x1024x24` pin so a silent fallback to a runner default fails
+  loudly — depth 16 refuses the truecolor backend), and
+  `test/verify-wayland-fractional.sh` in Docker with the sway image's
+  build layers cached via buildx `gha` cache (repeat runs don't rebuild
+  Arch+sway; `PIXPAPERS_IMAGE_BUILT=1` makes the script use the
+  pre-loaded image). `PIXPAPERS_BASELINE_BIN` is deliberately unset —
+  CI does not rebuild old commits, so the legacy+RSS sub-step skips as
+  the script already designs. All three gates start **soft-fail**
+  (continue-on-error, per the cargo-deny precedent); graduation
+  criterion: hard-fail after 5 consecutive green compositor jobs on
+  main. Status and run evidence in
+  [docs/VERIFICATION.md](docs/VERIFICATION.md#ci-compositor-gates--first-runs).
+
 ## [0.1.0] - 2026-10-24
 
 First release. Forced-pixelation wallpapers (presets `8/16/32/64/128/

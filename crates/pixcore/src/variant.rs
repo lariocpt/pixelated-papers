@@ -162,10 +162,10 @@ pub fn generate_from_image(
 /// via the `png` crate (absolute-minimum bytes; named tables use exactly
 /// their entries); `Off` stays plain RGBA.
 pub fn encode_variant(img: &image::RgbaImage, mode: PaletteMode) -> Vec<u8> {
-    if palette::encode_as_palette_png(mode) {
-        if let Some(bytes) = encode_palette_png(img, mode) {
-            return bytes;
-        }
+    if palette::encode_as_palette_png(mode)
+        && let Some(bytes) = encode_palette_png(img, mode)
+    {
+        return bytes;
     }
     let mut out = Vec::new();
     let enc = image::codecs::png::PngEncoder::new(&mut out);
@@ -389,10 +389,10 @@ pub fn encode_final(
     if !pal.contains(&bgc) {
         pal.push(bgc);
     }
-    if pal.len() <= 255 {
-        if let Some(bytes) = encode_indexed(img, &pal) {
-            return bytes;
-        }
+    if pal.len() <= 255
+        && let Some(bytes) = encode_indexed(img, &pal)
+    {
+        return bytes;
     }
     encode_rgba()
 }
@@ -531,12 +531,11 @@ pub fn bleed_layer(
     // build_bleed) — same rule as `generate`.
     let s = &s.resolved_for_output(out);
     let p = bleed_path(paths, id, s, out);
-    if p.exists() {
-        if let Ok(bytes) = fs::read(&p) {
-            if let Ok(img) = decode_any(&bytes) {
-                return Ok(img);
-            }
-        }
+    if p.exists()
+        && let Ok(bytes) = fs::read(&p)
+        && let Ok(img) = decode_any(&bytes)
+    {
+        return Ok(img);
     }
     let orig = original_path(paths, id)?;
     let bytes = fs::read(&orig).map_err(|e| PixError::io(&orig, e))?;

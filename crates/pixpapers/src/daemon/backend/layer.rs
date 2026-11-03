@@ -492,11 +492,11 @@ impl LayerState {
 
         {
             let b = &mut out.buffers[slot];
-            if b.buffer.is_none() || b.bw != out.bw || b.bh != out.bh {
-                if let Err(e) = ensure_buf(b, shm.clone(), &qh, out.bw, out.bh, (id, slot)) {
-                    log::error!("buffer alloc failed on {}: {e:#}", out.name);
-                    return;
-                }
+            if (b.buffer.is_none() || b.bw != out.bw || b.bh != out.bh)
+                && let Err(e) = ensure_buf(b, shm.clone(), &qh, out.bw, out.bh, (id, slot))
+            {
+                log::error!("buffer alloc failed on {}: {e:#}", out.name);
+                return;
             }
         }
 
@@ -817,14 +817,14 @@ impl Dispatch<WlBuffer, (usize, usize)> for LayerState {
         conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        if let wl_buffer::Event::Release = event {
-            if let Some(out) = state.outputs.iter_mut().find(|o| o.id == *id) {
-                if let Some(b) = out.buffers.get_mut(*slot) {
-                    b.busy = false;
-                }
-                if out.dirty {
-                    state.render_output(*id, conn);
-                }
+        if let wl_buffer::Event::Release = event
+            && let Some(out) = state.outputs.iter_mut().find(|o| o.id == *id)
+        {
+            if let Some(b) = out.buffers.get_mut(*slot) {
+                b.busy = false;
+            }
+            if out.dirty {
+                state.render_output(*id, conn);
             }
         }
     }
@@ -934,15 +934,15 @@ impl Backend for LayerBackend {
         // connection has nothing to give this tick (the fd wasn't ready);
         // the guard is consumed either way. dispatch_pending alone never
         // reads the socket, which is why globals never arrived before.
-        if let Some(guard) = self.queue.prepare_read() {
-            if let Err(e) = guard.read() {
-                use wayland_client::backend::WaylandError;
-                match e {
-                    WaylandError::Io(ref io) if io.kind() == std::io::ErrorKind::WouldBlock => {}
-                    _ => {
-                        log::error!("read_events: {e}");
-                        self.state.compositor_lost = true;
-                    }
+        if let Some(guard) = self.queue.prepare_read()
+            && let Err(e) = guard.read()
+        {
+            use wayland_client::backend::WaylandError;
+            match e {
+                WaylandError::Io(ref io) if io.kind() == std::io::ErrorKind::WouldBlock => {}
+                _ => {
+                    log::error!("read_events: {e}");
+                    self.state.compositor_lost = true;
                 }
             }
         }
