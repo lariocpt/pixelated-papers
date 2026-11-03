@@ -1573,6 +1573,12 @@ in parallel with the untouched fast `check` job:
 needs a pre-feature binary and CI does not rebuild old commits — the
 script skips that sub-step by design (its output says so).
 
+**Operator-only, still open after this wiring** (unchanged from the
+fractional-buffers section): the **live niri panel crispness check** at
+scale 1.5 and the **live RSS checklist** (`scale_path: "exact"` on the
+real panel, VmRSS ~70 MB) — the container proves negotiation, buffer
+math and RSS direction, not pixels on the maintainer's panel.
+
 **Graduation criterion (written down, MUST-CARRY comments in the
 workflow):** a soft-fail gate graduates to hard-fail after **5
 consecutive runs on main where that gate's step succeeded** (a
@@ -1585,3 +1591,4 @@ commit that graduates its gate.
 | Run | HEAD | Result |
 |---|---|---|
 | [41704233611](https://github.com/lariocpt/pixelated-papers/actions/runs/41704233611) | `6010fa3` | `check` ✅ 2m32s · `install-check` ✅ 1m49s · `msrv` ✅ 1m10s (first enforcement of the 1.88 claim: green) · `compositor` ❌ — **verify-tui ✅ and verify-x11 ✅** on their first runner run, no flakes → graduated to hard-fail immediately, run cited in the workflow comments. The job's red came from the image-build step: `Cache export is not supported for the docker driver` — build-push-action needs a docker-container builder for `cache-to type=gha`. Fixed with `docker/setup-buildx-action@v3`; the build + fractional steps run soft-fail while the record builds. |
+| [41706415063](https://github.com/lariocpt/pixelated-papers/actions/runs/41706415063) | `5743aa2` | **all four jobs green**: `check` ✅ 3m · `msrv` ✅ 1m · `install-check` ✅ 2m · `compositor` ✅ 6m (uncached sway-image build on the new buildx builder — the gha cache was empty; the layer-cache effect on wall-clock is measured by the next run). Fractional gate genuinely exercised on the runner: pre-built image used, `3840x2160 @ 1.5 → exact path, buffer 3840x2160 … no thrash`, baseline+RSS sub-step skipped by design. **Fractional-gate streak on main: 1/5.** |
