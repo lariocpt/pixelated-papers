@@ -1323,3 +1323,173 @@ motion unchanged (this section is not animated).
   maintainer's wallpaper — position/slideshow state is a filesystem fact the
   CLI owns, which is exactly the design.
 - The full **vision test rig** was not run (this change adds no imagery).
+
+## Exact fractional buffers — viewporter + fractional-scale (2026-11-03, this change)
+
+`wp_viewporter` + `wp_fractional_scale_v1` engaged when the compositor offers
+**both** and `preferred_scale` is non-integer: buffer =
+`round_half_away(logical × frac)`, viewporter destination = the logical size,
+buffer scale 1. The legacy integer path is the fallback and the code path
+whenever a protocol is missing or the scale is integer — its geometry formula
+is untouched, so 1.0/2.0 behavior is byte-for-byte unchanged. Design in
+[SCALING.md](SCALING.md).
+
+### Binding decision, with numbers
+
+Both protocols live in the **already-in-tree** `wayland-protocols` 0.32:
+`wp::viewporter` (stable, no feature) and `wp::fractional_scale` (staging,
+behind the crate's own `staging` feature). `wayland-protocols-experimental`
+was **not needed** — enabling a feature of an in-tree crate costs nothing at
+runtime:
+
+| Measure | Before | After | Delta |
+|---|---|---|---|
+| `cargo tree --workspace` nodes | 391 | 391 | **0** (feature flag, no new crate; `Cargo.lock` untouched) |
+| Default `--release` binary | 5,155,480 B (`e18a999ed6b0…`) | **5,190,680 B** (`18c99f347f81…`) | **+35,200 B (~34.4 KiB)** |
+| MSRV | 1.85 (workspace) | unchanged | `wayland-protocols` 0.32.12 (lockfile pin) declares `rust-version` **1.71** ≤ 1.85; the new code is plain integer arithmetic + existing bindings |
+
+MSRV caveat (pre-existing, not introduced here): the lockfile as resolved
+already cannot *build* on 1.85 — `image 0.25.10`, `ratatui 0.30.2` and
+`time 0.3.55` declare `rust-version` 1.88 (verified with a real 1.85.1
+toolchain on this same lockfile, which my diff does not touch). The 0.32.13
+release of `wayland-protocols` declares 1.86; the lockfile pin (0.32.12) is
+what keeps the declared MSRV story — a `cargo update` would break it
+regardless of this change.
+
+Protocol note: `preferred_scale` is the merged spec's **u32 numerator over
+denominator 120** (1.5 ⇒ 180) — the wl_fixed encoding from the drafts never
+shipped (verified against the wayland-protocols XML and sway/niri on the
+wire). Rounding rule: nearest, halves **away from zero** (the spec's own rule
+for surface sizes), exact integer math `(2·logical·n + 120) / 240`.
+
+### Path-selection rule (unit-tested truth table)
+
+| viewporter | fractional-scale | negotiated scale | path |
+|---|---|---|---|
+| ✓ | ✓ | non-integer ≥ 1.0 (e.g. 180/120) | **exact** |
+| ✓ | ✓ | 120/120 (1.0) or 240/120 (2.0) | legacy |
+| ✓ | ✓ | no `preferred_scale` yet | legacy |
+| ✓ | ✗ | any | legacy |
+| ✗ | ✓ | any | legacy |
+| ✗ | ✗ | any | legacy |
+| ✓ | ✓ | degenerate 0 or < 1.0 | legacy |
+
+Unit tests (`layer.rs scale_tests`): `buffer_dims_exact_at_common_scales`,
+`viewport_destination_is_the_logical_size`,
+`buffer_dims_round_half_away_from_zero` (2×1.25=2.5→3, 6×1.75=10.5→11,
+191×1.5=286.5→287, 190×1.75=332.5→333),
+`path_selection_requires_both_protocols_and_fractional_scale` (full table),
+`integer_scales_keep_the_legacy_geometry_byte_for_byte`,
+`path_selection_is_a_pure_function_of_its_inputs` (no cache thrash: the path
+is a pure function of (globals, scale), so a settled output cannot flip
+paths between renders; cache keys name concrete sizes — container-confirmed
+`v2-16-fit-3840x2160-auto.png`). Wire contract (`ipc.rs`):
+`output_scale_fields_are_skipped_when_absent`,
+`old_output_shape_deserializes_to_none`, `exact_path_output_round_trips`.
+
+### `status --json` field shape (additive, skip-if-absent — media-keys pattern)
+
+```json
+"outputs": [{
+  "name": "HEADLESS-1", "width": 3840, "height": 2160, "scale": 2,
+  "variant": "16/fit-auto",
+  "scale_path": "exact",
+  "frac_scale": "1.50"
+}]
+```
+
+`width`/`height` are the buffer dims; `scale_path` is `"exact"` or
+`"legacy"` on the layer backend, absent on x11; `frac_scale` appears once
+the compositor sent `preferred_scale`. A pre-feature daemon omits both; an
+old client ignores them. The human `status` annotates only the exact path
+(`scale 1.50 exact`); every other line is unchanged.
+
+### Container proof — headless sway (this box, sway 1:1.12-4, wlroots 0.20)
+
+`test/verify-wayland-fractional.sh` + `test/wayland-fractional/{Dockerfile,inside.sh}`
+(Arch container, `WLR_BACKENDS=headless WLR_RENDERER=pixman`, hermetic
+`PIXPAPERS_HOME`, host-built binary mounted ro; skips with a message when
+Docker is absent/unreachable; containers `--rm`, named `pixpapers-ff-*`).
+Reproduce:
+
+```sh
+cargo build --release
+PIXPAPERS_BASELINE_BIN=/path/to/pre-feature/pixpapers \
+  test/verify-wayland-fractional.sh target/release/pixpapers
+```
+
+| case (sway `mode` @ `scale`) | `scale_path` | `frac_scale` | buffer | daemon RSS |
+|---|---|---|---|---|
+| 1920x1080 @ 1.0 | `legacy` | 1.00 | 1920×1080 | 21,604 kB |
+| **3840x2160 @ 1.5** | **`exact`** | **1.50** | **3840×2160** = round(2560×1440 × 1.5) | **70,128 kB** |
+| 1920x1080 @ 2.0 | `legacy` | 2.00 | 1920×1080 | 21,428 kB |
+| 3840x2160 @ 1.5, **pre-feature binary** (`e92a54a`) | field absent | — | 5120×2880 (oversample) | **120,504 kB** |
+
+RSS pair at the **same virtual output** (same container, mode, scale;
+`awk '/VmRSS/{print $2}' /proc/<daemon_pid>/status` inside the container):
+**exact 70,128 kB < legacy 120,504 kB**. Container-relative — the dev
+panel's ~121 MB measured / ~70 MB predicted figures reproduce almost
+exactly here, but the panel numbers remain the operator's confirmation.
+Buffer dims identical across two `status --json` calls per case (`stable=yes`
+in the script output) — no path thrash. sway's `mode` is physical: at scale
+1.5 the logical size is 2560×1440, so the exact buffer lands on the panel
+grid — the dev-panel case reproduced. The pre-feature binary's log shows the
+old `(scale 2)` configure line and no fractional negotiation — the legacy
+path is what a compositor without the protocols will drive.
+
+### Gates run
+
+`cargo build` + `cargo build --release` clean · `cargo test --workspace`
+green (**219** = 116 pixcore + 83 pixpapers bin + 10 slideshow + 10
+media_keys; +9 this change) · `cargo test --workspace --features gui` green
+(**224**, +5 `gui::model`) · `clippy --workspace --all-targets
+--all-features -- -D warnings` clean · `cargo fmt --all --check` clean ·
+`env -u WAYLAND_DISPLAY test/smoke.sh` ok · `test/verify-x11.sh` ok (x11
+backend untouched — its `OutputStatus` gains only the two `None` fields) ·
+`test/verify-tui.sh` ok (10 goldens green; no new keys leaked into the TUI
+keymap) · `test/verify-wayland-fractional.sh` ok (table above).
+
+### Website (`docs/index.html`, one file)
+
+Text-only touch: the four images that shipped with empty `alt=""` (three
+slideshow-cycle duplicates + the gutter wipe overlay) got real descriptions
+— the pre-existing a11y nit (20 images, 4 empty alts → **0 missing/empty**).
+No content section added (the site has no scaling section; contract
+unchanged). Re-verified after the edit: `web_check` @ 360 px → 0 console
+errors, 0 failed requests, `img_missing_alt: 0`; `web_find_overflows` @
+360/400/720/1080 → 0 overflow; `web_performance` @ 1440 →
+`requests_total: 11` (1 document + 10 same-origin `img/*.png`), **zero
+external-origin fetches**, 0 images over 300 KB, 0 missing dimensions,
+palette/favicons/motion untouched.
+
+### Operator live-panel checklist (niri ≥ 26.04 exposes both protocols)
+
+Nothing here was run on the live desktop by this session — this box had no
+live Wayland session. Copy-paste, read-only:
+
+```sh
+niri --version                                   # needs >= 26.04 for fractional-scale
+pixpapers status --json | python3 -c 'import json,sys; o=json.load(sys.stdin)["outputs"]; print([(x["name"],x["width"],x["height"],x.get("scale_path"),x.get("frac_scale")) for x in o])'
+# expect on the 3840x2160 @ 1.5 panel: ("…", 3840, 2160, "exact", "1.50")
+pid=$(pixpapers status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["daemon_pid"])')
+grep VmRSS /proc/$pid/status                   # expect ~70 MB, down from the measured ~121 MB
+```
+
+If `scale_path` reads `"legacy"` with `frac_scale` absent, the compositor is
+older than its fractional-scale support — behavior is the unchanged v0.2 path.
+
+### Not run / deferred
+
+- **The operator's live niri panel** (checklist above): visual crispness at
+  1.5 on real hardware and the live RSS drop are the operator's confirmation;
+  the container proves the protocol negotiation, buffer math, path selection,
+  stability and the RSS direction, not pixels on the panel.
+- **Compositors without fractional-scale** (river, weston, cage…) were not
+  booted; the legacy path there is the untouched pre-feature code path plus
+  two `None` fields, covered by the byte-identical legacy geometry tests and
+  the 1.0/2.0 container cases.
+- **Multi-output** remains structurally handled, untested on real hardware
+  (unchanged caveat; the container testbed is single-output).
+- **headless-sway CI**: the wiring of `test/verify-wayland-fractional.sh`
+  into CI is the remaining deferred step; the testbed it needs is now
+  committed.

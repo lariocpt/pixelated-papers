@@ -64,6 +64,32 @@ Semantic Versioning. The build log behind each area lives in
   [docs/plan/step-10.md](docs/plan/step-10.md); user docs in
   [docs/CLI.md](docs/CLI.md#media-key-control-transport-agnostic). No new
   runtime dependency.
+- **Exact fractional buffers** (viewporter/fractional-scale) — on compositors
+  that offer **both** `wp_viewporter` (stable) and `wp_fractional_scale_v1`
+  (staging) and a non-integer `preferred_scale`, buffers are now sized
+  `round_half_away(logical × frac)` with the viewporter destination at the
+  logical size and buffer scale 1: the buffer **is** the physical pixel grid
+  — crisp 1:1 blocks, no compositor resample of an oversampled buffer, lower
+  RSS. The rounding rule is the protocol's own (nearest, halves away from
+  zero) in exact integer math; `preferred_scale` is the merged spec's u32
+  numerator over denominator 120 (1.5 ⇒ 180), not the wl_fixed encoding from
+  the drafts. The legacy integer path stays the fallback and is the code path
+  when a protocol is missing or the scale is integer — behavior at 1.0/2.0 is
+  byte-for-byte unchanged, and compositors without fractional scale (most of
+  them) keep working untouched. No new dependency: both protocols live in the
+  in-tree `wayland-protocols` 0.32 (fractional-scale behind its `staging`
+  feature) — cargo tree 391 → 391 nodes (+0), release binary +35,200 B
+  (~34.4 KiB). `status --json` outputs gain additive, skip-if-absent
+  `scale_path` (`"exact"`/`"legacy"`) + `frac_scale` (`"1.50"`) per output;
+  the human view annotates only the exact path (`scale 1.50 exact`). Proven
+  end-to-end in a committed headless-sway Docker testbed
+  (`test/verify-wayland-fractional.sh`, skips without Docker): 3840×2160 @
+  1.5 → exact path, buffer 3840×2160 (not the legacy 5120×2880), stable keys;
+  1.0/2.0 → legacy, unchanged; pre-feature binary at the same output
+  oversamples and uses 120,504 kB RSS vs the exact path's 70,128 kB. Numbers
+  and the operator live-panel checklist in [docs/VERIFICATION.md](docs/VERIFICATION.md);
+  design in [docs/SCALING.md](docs/SCALING.md). The daemon stays a pure
+  renderer: no new persisted state, no manifest change, no new knob.
 
 
 ### Added

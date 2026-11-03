@@ -169,6 +169,13 @@ landed in is in [CHANGELOG.md](CHANGELOG.md).)
   in [`contrib/waybar/`](contrib/waybar/): click opens the TUI in a
   terminal, the wheel cycles wallpapers (up = next, down = previous,
   wrap-around), the label refreshes on every tick.
+- **Exact fractional buffers** — on compositors offering `wp_viewporter` +
+  `wp_fractional_scale_v1` (niri, sway ≥ 1.11, hyprland, …) the buffer at
+  scale 1.5 is the panel's own pixel grid — crisp 1:1 blocks, no compositor
+  resample, lower RSS (70 MB vs 121 MB measured in the headless-sway
+  testbed). Integer scales and compositors without the protocols keep the
+  unchanged legacy path byte-for-byte. `status --json` shows the negotiated
+  `scale_path` per output. Details in [docs/SCALING.md](docs/SCALING.md).
 
 ## Deliberately not included
 
@@ -184,8 +191,6 @@ landed in is in [CHANGELOG.md](CHANGELOG.md).)
   still-image renderer with no cover pipeline doesn't need; measured, a `zbus`
   dependency added ~20% to the release binary and broke MSRV, so it stays out
   (see [docs/plan/step-10.md](docs/plan/step-10.md)).
-- **Exact fractional buffers** (viewporter/fractional-scale) — a separate
-  track; current buffer sizing covers everything the tested matrix uses.
 
 None of them are refused forever — they are out of scope for a tool whose
 job is one look, done fast.

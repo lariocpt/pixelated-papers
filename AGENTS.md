@@ -15,6 +15,7 @@ env -u WAYLAND_DISPLAY test/smoke.sh        # offline layer (CI-safe, determinis
 WAYLAND_DISPLAY=wayland-1 test/verify-live.sh target/release/pixpapers
 test/verify-x11.sh target/release/pixpapers # x11 layer under Xvfb (self-wraps; skips by name)
 test/verify-tui.sh target/release/pixpapers # TUI on a real pty (headless env)
+test/verify-wayland-fractional.sh target/release/pixpapers # headless-sway fractional buffers in Docker (skips without Docker; PIXPAPERS_BASELINE_BIN adds the legacy+RSS pair)
 WAYLAND_DISPLAY=wayland-1 test/verify-waybar.sh
 WAYLAND_DISPLAY=wayland-1 test/bench-daemon.sh target/release/pixpapers 25
 ```
@@ -103,10 +104,18 @@ the same change.
 
 ## Deferred by decision, not by omission
 
-Still deferred: exact fractional buffers, headless-sway
-CI. Don't
-"helpfully" implement these without asking; they're v0.2+ scoped on
-purpose. (The blurred-bleed gutter shipped at 25f9a90 as `gutter-style
+Still deferred: headless-sway
+CI (the committed `test/verify-wayland-fractional.sh` container testbed
+now bootstraps exactly that — an image + one script, skipped-with-message
+without Docker — so wiring it into CI is the remaining step). Don't
+"helpfully" implement the rest of these without asking; they're v0.2+
+scoped on purpose. **Exact fractional buffers shipped** after it was
+asked for: viewporter + fractional-scale engaged when both exist and the
+scale is fractional, legacy integer path byte-for-byte unchanged
+otherwise; proven in the headless-sway container (exact 3840×2160 buffer
+at 1.5, RSS 70,128 kB vs the pre-feature oversample's 120,504 kB at the
+same virtual output — numbers in docs/VERIFICATION.md, design in
+docs/SCALING.md). (The blurred-bleed gutter shipped at 25f9a90 as `gutter-style
 bleed`; the by-output-size `auto` preset shipped after it; and auto-preset
 **by image content** shipped as the separate opt-in `auto-content` token —
 plain `auto` still picks from the output size only, and the picture is read
