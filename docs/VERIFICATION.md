@@ -1593,3 +1593,96 @@ commit that graduates its gate.
 | [41704233611](https://github.com/lariocpt/pixelated-papers/actions/runs/41704233611) | `6010fa3` | `check` ✅ 2m32s · `install-check` ✅ 1m49s · `msrv` ✅ 1m10s (first enforcement of the 1.88 claim: green) · `compositor` ❌ — **verify-tui ✅ and verify-x11 ✅** on their first runner run, no flakes → graduated to hard-fail immediately, run cited in the workflow comments. The job's red came from the image-build step: `Cache export is not supported for the docker driver` — build-push-action needs a docker-container builder for `cache-to type=gha`. Fixed with `docker/setup-buildx-action@v3`; the build + fractional steps run soft-fail while the record builds. |
 | [41706415063](https://github.com/lariocpt/pixelated-papers/actions/runs/41706415063) | `5743aa2` | **all four jobs green**: `check` ✅ 3m · `msrv` ✅ 1m · `install-check` ✅ 2m · `compositor` ✅ 6m (uncached sway-image build on the new buildx builder — the gha cache was empty). Fractional gate genuinely exercised on the runner: pre-built image used, `3840x2160 @ 1.5 → exact path, buffer 3840x2160 … no thrash`, baseline+RSS sub-step skipped by design. |
 | [41708852977](https://github.com/lariocpt/pixelated-papers/actions/runs/41708852977) | `701b10a` | **all four jobs green** — `compositor` ✅ **2m** with `importing cache manifest from gha` (the Arch+sway layers were NOT rebuilt: 6m → 2m, the layer-cache design goal proven); fractional gate green again (`verify-wayland-fractional: ok`). **Fractional-gate streak on main: 2/5 as of this commit** (41706415063, 41708852977); subsequent green runs extend the streak toward graduation. |
+| [41710707552](https://github.com/lariocpt/pixelated-papers/actions/runs/41710707552) | `f1928a2` | all four jobs green — `compositor` ✅ 2m28s (gha layer-cache import again); fractional gate green on the runner a third time. **Fractional-gate streak on main: 3/5** (41706415063, 41708852977, 41710707552). |
+| [41717191020](https://github.com/lariocpt/pixelated-papers/actions/runs/41717191020) | `422d607` | **all four jobs green** (the v0.4.0 release commit): `check` ✅ · `install-check` ✅ · `msrv` ✅ · `compositor` ✅ 2m with the fractional-gate step green. **Fractional-gate streak on main: 4/5** — one more green main run short of graduation, so the MUST-CARRY comments and `continue-on-error` stay (the release pre-flight measured 3/5 and left them untouched). |
+
+## release: v0.4.0 — auto-content, media keys, exact fractional buffers (2026-11-03)
+
+Minor release over `f1928a2`: three additive user-facing features since
+0.3.0 — the content-based auto-preset **`auto-content`**, the **media-key**
+control surface (next/prev/play/pause + observable status position), and
+**exact fractional buffers** (viewporter + fractional-scale with the
+legacy path as fallback) — plus the measured, CI-enforced **MSRV raise
+1.85 → 1.88**: source builds on toolchains < 1.88 (including
+`cargo install` of this version) are refused; previously published
+versions are unaffected. `pixcore` bumps to 0.4.0 on genuinely new public
+surface (the `content` analysis module: `ContentProbe`, `analyze_file`,
+`content_density`, `content_preset`, `resolve_content_for`,
+`CONTENT_RULE_VERSION`); `pixpapers` 0.4.0 declares `pixcore = "0.4.0"`.
+No manifest or config version bump — every feature is backward compatible.
+
+- Workspace gates at the release tree (`422d607`): 116 pixcore + 83
+  pixpapers + 10 media_keys + 10 slideshow green (219; **224** with
+  `--features gui`, +5 `gui::model`) · `clippy --workspace --all-targets
+  --all-features -- -D warnings` clean · `fmt --all --check` clean ·
+  `env -u WAYLAND_DISPLAY test/smoke.sh` ok · `test/verify-x11.sh` ok ·
+  `test/verify-tui.sh` ok · `test/verify-wayland-fractional.sh` ok
+  (headless sway, local Docker). Measured identically at pre-bump HEAD
+  `f1928a2` before the version sweep.
+- Cargo.lock churn was only `pixcore`/`pixpapers` `0.3.0 → 0.4.0`.
+- Fractional-gate graduation check at release pre-flight: streak **3/5**
+  (41706415063, 41708852977, 41710707552 — gate step verified green in
+  each) → below the MUST-CARRY 5, so the soft-fail and its MUST-CARRY
+  comments stayed untouched. The release CI run extended the streak to
+  4/5 (table above).
+
+### Release-chain evidence (post-tag)
+
+- `main` fast-forwarded `f1928a2..422d607`; annotated tag `v0.4.0`
+  (object `5c5310f`, peels to `422d607` = pushed HEAD) pushed to origin.
+- CI at the release commit: run
+  [41717191020](https://github.com/lariocpt/pixelated-papers/actions/runs/41717191020)
+  all four jobs green, fractional-gate step green (streak 4/5).
+- `release.yml` run
+  [41717197248](https://github.com/lariocpt/pixelated-papers/actions/runs/41717197248)
+  green: created the `Draft v0.4.0` with the dist binary + `SHA256SUMS`.
+- `cargo publish -p pixcore` — dry-run first (51 files: the 0.3.0 list +
+  `src/content.rs`, no stray local/secret files, verified build
+  compiled), then real: **pixcore 0.4.0 live** on crates.io, confirmed
+  `max_version = 0.4.0` via the API before publishing the dependent crate.
+- `cargo publish -p pixpapers` — dry-run resolved `pixcore 0.4.0` **from
+  the registry** and compiled (39 files, no strays), then real:
+  **pixpapers 0.4.0 live**; `max_version = 0.4.0` confirmed via the API
+  for both crates.
+- Fresh install under a hermetic `CARGO_HOME` + `PIXPAPERS_HOME`:
+  `cargo install pixpapers --version 0.4.0` downloaded `pixpapers 0.4.0`
+  + `pixcore 0.4.0` from the registry (not the git source) and reports
+  **0.4.0**; an `add` → `pixel <ID> auto-content` → `list` → `export`
+  smoke on the installed binary passes: the probe persisted
+  (`detail 33 → 16 on a big display`), `list` shows `auto-content`, and
+  `export … --pixel auto-content` wrote a valid PNG with the
+  `auto-content→16` wrote-line — the shipped feature runs in the
+  *published* crate.
+- Published bare `.crate` self-test: unpacked `pixpapers-0.4.0` (pixcore
+  resolved from the registry), `cargo test` = 83 (`main.rs`) + 10
+  (`media_keys.rs`) + 10 (`slideshow.rs`) = **103 passed / 0 failed** —
+  the same stronger-than-v0.2.1 signature as the 0.3.0 run's 79/0 (0
+  `note: skipping CLI golden` lines: the goldens executed against the
+  published artifact), on the larger 0.4.0 suite. `.crate` sha256:
+  pixcore `f9f97980…208abbbf` (51 files), pixpapers `60d25b61…924edd12`
+  (39 files).
+- GitHub Release **`v0.4.0`** published — the workflow's draft was
+  edited in place (the v0.3.0 422-fallback lesson), its binary +
+  `SHA256SUMS` assets removed to match the asset-free v0.2.1/v0.3.0
+  shape; body = the CHANGELOG entry plus the explicit MSRV note. Source
+  tarball sha256 `5ce28a70…432e0bd8` (recorded in the notes). No
+  lingering `Draft v0.4.0` remains.
+- Pages rebuilt: the live site serves the `v0.4.0` strings (release link
+  + footer). Site contract re-verified — every `src=` is a same-origin
+  `img/*.png` or a `data:` URI, external origins appear only in
+  `<a href>` (github/crates.io), the favicon `data:` URI is untouched,
+  and `docs/img` gained nothing in the release commits.
+- `contrib/packaging/PKGBUILD` `pkgver` bumped to `0.4.0`. It stays a
+  declared draft — nothing was pushed to any AUR remote.
+
+### Disclosed, not silently changed
+
+- The CHANGELOG's `## [0.3.0] - 2026-11-02` header had been **dropped by
+  `5ff36e3`** when it prepended the auto-content bullet — the released
+  0.3.0 entries had been sitting inside `[Unreleased]` since. The release
+  commit restored the header (the block is byte-identical to `24b4dea`'s)
+  and disclosed it in its message.
+- The README drift the v0.3.0 trail disclosed is now closed: the "Shipped
+  since v0.2" intro spans the v0.2–v0.4 lines, the auto-content bullet no
+  longer says "Landing in the next release", and the media-key surface
+  gained its missing bullet in the shipped list.
