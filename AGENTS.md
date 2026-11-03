@@ -108,10 +108,12 @@ the same change.
 `.github/workflows/ci.yml` runs `verify-tui.sh`, `verify-x11.sh` (Xvfb,
 depth pinned to 24-bit) and `verify-wayland-fractional.sh` (Docker,
 layer-cached sway image) on every push/PR; the `msrv` job enforces the
-`rust-version` claim with a pinned toolchain. All three compositor
-gates are currently **soft-fail** (continue-on-error, MUST-CARRY
-comments) — graduation to hard-fail after 5 consecutive green
-compositor jobs on main (criterion + status in docs/VERIFICATION.md).
+`rust-version` claim with a pinned toolchain. `verify-tui` and
+`verify-x11` are **hard-fail** (green on their first runner run); the
+sway-image build + `verify-wayland-fractional` are **soft-fail**
+(continue-on-error, MUST-CARRY comments) — graduation after 5
+consecutive successful runs on main (criterion + status in
+docs/VERIFICATION.md).
 Don't "helpfully" implement the rest of these without asking; they're
 v0.2+ scoped on purpose. **Exact fractional buffers shipped** after it was
 asked for: viewporter + fractional-scale engaged when both exist and the

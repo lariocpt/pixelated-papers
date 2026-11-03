@@ -171,11 +171,15 @@ Semantic Versioning. The build log behind each area lives in
   Arch+sway; `PIXPAPERS_IMAGE_BUILT=1` makes the script use the
   pre-loaded image). `PIXPAPERS_BASELINE_BIN` is deliberately unset —
   CI does not rebuild old commits, so the legacy+RSS sub-step skips as
-  the script already designs. All three gates start **soft-fail**
-  (continue-on-error, per the cargo-deny precedent); graduation
-  criterion: hard-fail after 5 consecutive green compositor jobs on
-  main. Status and run evidence in
-  [docs/VERIFICATION.md](docs/VERIFICATION.md#ci-compositor-gates--first-runs).
+  the script already designs. `verify-tui`/`verify-x11` went
+  **hard-fail** on their first runner run (green, no flakes, run cited
+  in the workflow); the sway-image build + `verify-wayland-fractional`
+  start **soft-fail** (buildx gha-cache needs the docker-container
+  driver — setup-buildx added; the Arch-mirror flake surface stays soft
+  until the record says otherwise). Graduation criterion: hard-fail
+  after 5 consecutive successful runs on main. Status and run evidence
+  in
+  [docs/VERIFICATION.md](docs/VERIFICATION.md#ci-compositor-gates--design--graduation-criterion-2026-11-03-this-change).
 
 ## [0.1.0] - 2026-10-24
 

@@ -1564,9 +1564,9 @@ in parallel with the untouched fast `check` job:
 
 | Gate | Environment | Status at ship |
 |---|---|---|
-| `test/verify-tui.sh` | plain runner, real pty | soft-fail (continue-on-error) |
-| `test/verify-x11.sh` | Xvfb, **depth pinned 24-bit** — the script self-wraps `xvfb-run -s "-screen 0 1280x1024x24"`; the workflow greps that pin so a silent fallback to a runner default fails loudly (depth 16 refuses the truecolor backend — the script's own test 6) | soft-fail (continue-on-error) |
-| `test/verify-wayland-fractional.sh` | Docker, sway 1.12 headless; image layers cached with buildx `gha` cache (`docker/build-push-action`, `load: true`); `PIXPAPERS_IMAGE_BUILT=1` makes the script use the pre-loaded image instead of rebuilding | soft-fail (continue-on-error) |
+| `test/verify-tui.sh` | plain runner, real pty | **hard-fail** (graduated at first runner run — see evidence) |
+| `test/verify-x11.sh` | Xvfb, **depth pinned 24-bit** — the script self-wraps `xvfb-run -s "-screen 0 1280x1024x24"`; the workflow greps that pin so a silent fallback to a runner default fails loudly (depth 16 refuses the truecolor backend — the script's own test 6) | **hard-fail** (graduated at first runner run — see evidence) |
+| sway image build + `test/verify-wayland-fractional.sh` | Docker, sway 1.12 headless; buildx docker-container driver, layers cached with `gha` cache (`docker/build-push-action`, `load: true`); `PIXPAPERS_IMAGE_BUILT=1` makes the script use the pre-loaded image instead of rebuilding | soft-fail (continue-on-error) |
 | `msrv` job | pinned toolchain read from Cargo.toml | **hard-fail** |
 
 `PIXPAPERS_BASELINE_BIN` is deliberately unset in CI: the legacy+RSS pair
@@ -1574,9 +1574,14 @@ needs a pre-feature binary and CI does not rebuild old commits — the
 script skips that sub-step by design (its output says so).
 
 **Graduation criterion (written down, MUST-CARRY comments in the
-workflow):** a soft-fail compositor gate graduates to hard-fail after
-**5 consecutive green compositor jobs on main**. Each MUST-CARRY comment
-is removed in the commit that graduates its gate.
+workflow):** a soft-fail gate graduates to hard-fail after **5
+consecutive runs on main where that gate's step succeeded** (a
+continue-on-error step that failed shows a warning — warnings do not
+count toward the streak). Each MUST-CARRY comment is removed in the
+commit that graduates its gate.
 
-First-run evidence (run URLs + per-job statuses) is appended to this
-section once the first CI cycles land.
+### First runs (evidence)
+
+| Run | HEAD | Result |
+|---|---|---|
+| [41704233611](https://github.com/lariocpt/pixelated-papers/actions/runs/41704233611) | `6010fa3` | `check` ✅ 2m32s · `install-check` ✅ 1m49s · `msrv` ✅ 1m10s (first enforcement of the 1.88 claim: green) · `compositor` ❌ — **verify-tui ✅ and verify-x11 ✅** on their first runner run, no flakes → graduated to hard-fail immediately, run cited in the workflow comments. The job's red came from the image-build step: `Cache export is not supported for the docker driver` — build-push-action needs a docker-container builder for `cache-to type=gha`. Fixed with `docker/setup-buildx-action@v3`; the build + fractional steps run soft-fail while the record builds. |
