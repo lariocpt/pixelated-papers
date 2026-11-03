@@ -2765,7 +2765,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pixcore"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "blake3",
  "criterion",
@@ -2782,7 +2782,7 @@ dependencies = [
 
 [[package]]
 name = "pixpapers"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",

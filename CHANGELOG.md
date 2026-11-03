@@ -6,6 +6,8 @@ Semantic Versioning. The build log behind each area lives in
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-03
+
 ### Added
 - **`auto-content` pixel preset** — auto-preset **by image content**, opt-in
   as its own token so plain `auto` is untouched. Where `auto` picks a preset
@@ -92,6 +94,52 @@ Semantic Versioning. The build log behind each area lives in
   renderer: no new persisted state, no manifest change, no new knob.
 
 
+### Changed
+- **MSRV claim raised 1.85 → 1.88 (measured, CI-enforced).** The declared
+  floor had drifted: the resolved lockfile cannot build on 1.85 — bisected
+  with real toolchains on this lockfile: **1.85.1 / 1.86.0 / 1.87.0 all
+  refuse** (`image 0.25.10`, `ratatui 0.30.2` + family, `time 0.3.55`
+  declare `rust-version` 1.88.0), **1.88.0 builds green**
+  (`cargo +1.88.0 build --locked --workspace`). Downgrading to 1.85 was
+  measured infeasible, not untried: the whole `ratatui` 0.30 line declares
+  ≥ 1.86 (0.30.0 → 1.86), and `egui` 0.37 (the `gui` feature) requires
+  `image ^0.25.10`, so the lockfile can never resolve an image below the
+  1.88-declaring 0.25.10. The `gui` feature's own floor is **1.95**
+  (eframe 0.37 declares it; 1.94 refuses, 1.95 checks green). A new `msrv`
+  CI job pins the toolchain **read from the Cargo.toml claim itself** and
+  builds `--locked --workspace` — an unenforced claim is how the drift
+  happened. The honest floor also unlocked clippy's MSRV-aware lints
+  (let-chains at 1.88, `is_multiple_of` at 1.87): 20 call sites collapsed
+  per clippy's own suggestions, clippy green again. **User impact:** anyone
+  building this release **from source** on a toolchain below 1.88 — including
+  `cargo install pixpapers` of 0.4.0 — will be refused; previously published
+  versions and the v0.3.0 release are unaffected.
+  Measurements in [docs/VERIFICATION.md](docs/VERIFICATION.md#msrv-honesty--185--188-measured--ci-enforced).
+
+### CI
+- **Compositor gates on every push/PR** — a parallel `compositor` job in
+  `.github/workflows/ci.yml` (the fast `check` job is untouched):
+  `test/verify-tui.sh` headless, `test/verify-x11.sh` under Xvfb with the
+  screen depth pinned to 24-bit (the workflow greps the script's
+  `1280x1024x24` pin so a silent fallback to a runner default fails
+  loudly — depth 16 refuses the truecolor backend), and
+  `test/verify-wayland-fractional.sh` in Docker with the sway image's
+  build layers cached via buildx `gha` cache (repeat runs don't rebuild
+  Arch+sway; `PIXPAPERS_IMAGE_BUILT=1` makes the script use the
+  pre-loaded image). `PIXPAPERS_BASELINE_BIN` is deliberately unset —
+  CI does not rebuild old commits, so the legacy+RSS sub-step skips as
+  the script already designs. `verify-tui`/`verify-x11` went
+  **hard-fail** on their first runner run (green, no flakes, run cited
+  in the workflow); the sway-image build + `verify-wayland-fractional`
+  start **soft-fail** (buildx gha-cache needs the docker-container
+  driver — setup-buildx added; the Arch-mirror flake surface stays soft
+  until the record says otherwise). Graduation criterion: hard-fail
+  after 5 consecutive successful runs on main. Status and run evidence
+  in
+  [docs/VERIFICATION.md](docs/VERIFICATION.md#ci-compositor-gates--design--graduation-criterion-2026-11-03-this-change).
+
+## [0.3.0] - 2026-11-02
+
 ### Added
 - **Native GUI** (`pixpapers gui`) — a native egui/`eframe` control window, shipped behind a **default-off** `gui` cargo feature so the default binary keeps its exact dependency set and does not list the subcommand in `--help`. It is a client only: every action calls the same `commands::*` + `cli::apply_now` the CLI and TUI use, so a set from the window writes a byte-for-byte identical manifest to `pixpapers set` (asserted in-process in `src/gui/model.rs`), and thumbnails reuse the cached variant PNGs (no full-size render in the GUI process). The app logic lives in a headless, unit-tested view-model; `eframe` is a thin paint layer. `cargo build --release --features gui` = 12,138,488 B vs 4,907,968 B default (+7.2 MiB of eframe/glow/winit); with the feature off the GUI source adds **0 bytes** — the sole OFF delta vs the pre-GUI binary is the `image` 0.25.9→0.25.10 patch bump eframe's dependency constraint forces (+60 KiB), proven by a byte-identical control build of the HEAD source on the same lock. Gates, the control build, and one real Xvfb screenshot in [docs/VERIFICATION.md](docs/VERIFICATION.md#native-gui).
 - **Live wallpapers (slideshow)** — a still-image slideshow through the existing library. `pixpapers slideshow on [SECONDS]` starts cycling the library's entries in order, `pixpapers slideshow off` stops, and `pixpapers slideshow interval <SECONDS>` changes the cadence (default 300 s). No epoch or counter is stored: the active wallpaper is derived at render time from the wall clock — `active = (unix_now / interval) % entry_count` — so the daemon stays a pure renderer, the phase survives a restart, and the poll loop simply wakes at the next boundary (idle cost unchanged when off; measured in docs/VERIFICATION.md). `status` and `status --json` show `slideshow: on · next change in Ns`. TOML: `[slideshow] enabled = true, interval_secs = 300`. Backward compatible (no manifest or config version bump; old files load unchanged). This is a deferred idea built on explicit request — it cycles *still* wallpapers only; decoding **animated/video** sources stays out (see AGENTS.md). New CLI: `pixpapers slideshow on|off|interval <SECONDS>`. See [docs/CLI.md](docs/CLI.md#slideshow-live-wallpapers).
@@ -139,47 +187,6 @@ Semantic Versioning. The build log behind each area lives in
 - An interactive **before/after** comparison of the two gutter styles in the
   website (`docs/index.html`), with the gutter magnified and the ring-vs-centre
   pixel difference computed live in the browser from the demo images.
-
-### Changed
-- **MSRV claim raised 1.85 → 1.88 (measured, CI-enforced).** The declared
-  floor had drifted: the resolved lockfile cannot build on 1.85 — bisected
-  with real toolchains on this lockfile: **1.85.1 / 1.86.0 / 1.87.0 all
-  refuse** (`image 0.25.10`, `ratatui 0.30.2` + family, `time 0.3.55`
-  declare `rust-version` 1.88.0), **1.88.0 builds green**
-  (`cargo +1.88.0 build --locked --workspace`). Downgrading to 1.85 was
-  measured infeasible, not untried: the whole `ratatui` 0.30 line declares
-  ≥ 1.86 (0.30.0 → 1.86), and `egui` 0.37 (the `gui` feature) requires
-  `image ^0.25.10`, so the lockfile can never resolve an image below the
-  1.88-declaring 0.25.10. The `gui` feature's own floor is **1.95**
-  (eframe 0.37 declares it; 1.94 refuses, 1.95 checks green). A new `msrv`
-  CI job pins the toolchain **read from the Cargo.toml claim itself** and
-  builds `--locked --workspace` — an unenforced claim is how the drift
-  happened. The honest floor also unlocked clippy's MSRV-aware lints
-  (let-chains at 1.88, `is_multiple_of` at 1.87): 20 call sites collapsed
-  per clippy's own suggestions, clippy green again.
-  Measurements in [docs/VERIFICATION.md](docs/VERIFICATION.md#msrv-honesty--185--188-measured--ci-enforced).
-
-### CI
-- **Compositor gates on every push/PR** — a parallel `compositor` job in
-  `.github/workflows/ci.yml` (the fast `check` job is untouched):
-  `test/verify-tui.sh` headless, `test/verify-x11.sh` under Xvfb with the
-  screen depth pinned to 24-bit (the workflow greps the script's
-  `1280x1024x24` pin so a silent fallback to a runner default fails
-  loudly — depth 16 refuses the truecolor backend), and
-  `test/verify-wayland-fractional.sh` in Docker with the sway image's
-  build layers cached via buildx `gha` cache (repeat runs don't rebuild
-  Arch+sway; `PIXPAPERS_IMAGE_BUILT=1` makes the script use the
-  pre-loaded image). `PIXPAPERS_BASELINE_BIN` is deliberately unset —
-  CI does not rebuild old commits, so the legacy+RSS sub-step skips as
-  the script already designs. `verify-tui`/`verify-x11` went
-  **hard-fail** on their first runner run (green, no flakes, run cited
-  in the workflow); the sway-image build + `verify-wayland-fractional`
-  start **soft-fail** (buildx gha-cache needs the docker-container
-  driver — setup-buildx added; the Arch-mirror flake surface stays soft
-  until the record says otherwise). Graduation criterion: hard-fail
-  after 5 consecutive successful runs on main. Status and run evidence
-  in
-  [docs/VERIFICATION.md](docs/VERIFICATION.md#ci-compositor-gates--design--graduation-criterion-2026-11-03-this-change).
 
 ## [0.1.0] - 2026-10-24
 
