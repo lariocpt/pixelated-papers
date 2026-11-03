@@ -19,7 +19,10 @@
 #
 # Skips with a message when Docker is absent or unreachable — a box without
 # Docker is not a broken compositor. Containers are --rm and named; the one
-# image built here is the committed Dockerfile's build.
+# image built here is the committed Dockerfile's build. CI (which caches the
+# image's build layers itself) may pre-build the image and set
+# PIXPAPERS_IMAGE_BUILT=1 to skip the build step here; the image must then
+# already be loaded, or this script fails rather than silently rebuilding.
 set -eu
 
 BIN=${1:-target/release/pixpapers}
@@ -41,8 +44,14 @@ docker info >/dev/null 2>&1 \
     || { echo "SKIP: docker daemon not reachable — headless-sway fractional acceptance not exercised"; exit 0; }
 
 echo "verify-wayland-fractional: $BIN"
-docker build -q -t "$IMAGE" "$HERE/wayland-fractional" >/dev/null \
-    || fail "docker build of test/wayland-fractional failed"
+if [ -n "${PIXPAPERS_IMAGE_BUILT:-}" ]; then
+    docker image inspect "$IMAGE" >/dev/null 2>&1 \
+        || fail "PIXPAPERS_IMAGE_BUILT set but image $IMAGE is not loaded"
+    say "image pre-built (PIXPAPERS_IMAGE_BUILT): $IMAGE"
+else
+    docker build -q -t "$IMAGE" "$HERE/wayland-fractional" >/dev/null \
+        || fail "docker build of test/wayland-fractional failed"
+fi
 
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
