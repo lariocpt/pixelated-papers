@@ -83,6 +83,18 @@ pub struct StatusReport {
     /// client ignores it; a new client reading an old report sees `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_auto_detail: Option<String>,
+    /// Position of the current wallpaper within the ordered library
+    /// (0-based), and the library length — the read-only "track N of M"
+    /// metadata a media widget shows alongside the title. Pure observation
+    /// (the daemon re-reads the manifest to render anyway), so it keeps the
+    /// daemon a pure renderer. Additive like `slideshow_enabled`: a pre-feature
+    /// report omits both keys (byte-identical), an old client ignores them, and
+    /// a new client reading an old report sees `None`. `current_index` is
+    /// `None` when no wallpaper is set; `library_len` is the entry count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library_len: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -167,6 +179,8 @@ mod tests {
             slideshow_enabled: None,
             next_change: None,
             current_auto_detail: None,
+            current_index: None,
+            library_len: None,
         }
     }
 
@@ -178,6 +192,8 @@ mod tests {
         assert!(!json.contains("slideshow_enabled"), "{json}");
         assert!(!json.contains("next_change"), "{json}");
         assert!(!json.contains("current_auto_detail"), "{json}");
+        assert!(!json.contains("current_index"), "{json}");
+        assert!(!json.contains("library_len"), "{json}");
     }
 
     #[test]
@@ -191,6 +207,8 @@ mod tests {
         assert_eq!(r.slideshow_enabled, None);
         assert_eq!(r.next_change, None);
         assert_eq!(r.current_auto_detail, None);
+        assert_eq!(r.current_index, None);
+        assert_eq!(r.library_len, None);
     }
 
     #[test]
@@ -199,10 +217,14 @@ mod tests {
         r.slideshow_enabled = Some(true);
         r.next_change = Some(1_700_000_000);
         r.current_auto_detail = Some("auto-content→64 @1920x1080".into());
+        r.current_index = Some(2);
+        r.library_len = Some(7);
         let json = serde_json::to_string(&r).unwrap();
         assert!(json.contains("\"slideshow_enabled\":true"), "{json}");
         assert!(json.contains("\"next_change\":1700000000"), "{json}");
         assert!(json.contains("auto-content"), "{json}");
+        assert!(json.contains("\"current_index\":2"), "{json}");
+        assert!(json.contains("\"library_len\":7"), "{json}");
         let back: StatusReport = serde_json::from_str(&json).unwrap();
         assert_eq!(back.slideshow_enabled, Some(true));
         assert_eq!(back.next_change, Some(1_700_000_000));
@@ -210,5 +232,7 @@ mod tests {
             back.current_auto_detail.as_deref(),
             Some("auto-content→64 @1920x1080")
         );
+        assert_eq!(back.current_index, Some(2));
+        assert_eq!(back.library_len, Some(7));
     }
 }

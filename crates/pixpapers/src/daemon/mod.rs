@@ -467,6 +467,12 @@ fn status_report(backend: &ActiveBackend, paths: &Paths) -> StatusReport {
                 _ => None,
             }
         });
+    // "track N of M": the current entry's slot in the ordered library
+    // (`None` when nothing is set), computed while `lib.current` is available.
+    let current_index = lib
+        .current
+        .as_deref()
+        .and_then(|id| lib.entries.iter().position(|e| e.id == id));
     StatusReport {
         daemon_running: true,
         daemon_pid: Some(std::process::id()),
@@ -479,6 +485,12 @@ fn status_report(backend: &ActiveBackend, paths: &Paths) -> StatusReport {
         variants_on_disk: 0, // cheap scan done in status.rs against shared FS
         variant_bytes: 0,
         current_auto_detail,
+        // Read-only "track N of M" position (media-widget metadata): the
+        // current entry's slot in the ordered library, computed before
+        // `current` is moved above. Pure observation — the daemon re-reads the
+        // manifest to render anyway, so it stays a pure renderer.
+        current_index,
+        library_len: Some(lib.entries.len()),
         bench: Some(crate::ipc::BenchReport {
             applies: b.applies,
             last_switch_ms: b.last_switch_ms,

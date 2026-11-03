@@ -72,6 +72,17 @@ enum Cmd {
         #[arg(allow_negative_numbers = true)]
         by: Option<i64>,
     },
+    /// Next wallpaper — media-key alias for `cycle 1` (identical state
+    /// transition). Pairs with `prev`/`play`/`pause` so a key binder
+    /// (sxhkd / niri `bind` / keyboardctl) can drive the slideshow from
+    /// transport keys without a D-Bus MPRIS service.
+    Next,
+    /// Previous wallpaper — media-key alias for `cycle -1`.
+    Prev,
+    /// Start the slideshow — media-key alias for `slideshow on`.
+    Play,
+    /// Stop the slideshow — media-key alias for `slideshow off`.
+    Pause,
     /// Daemon status
     Status {
         #[arg(long)]
@@ -293,6 +304,43 @@ pub fn run(cmd: Cli, paths: &Paths, cfg: &Config) -> Result<()> {
                 entry.title,
                 state_line(paths)
             );
+        }
+        // Media-key aliases: byte-identical state transitions to `cycle ±1`
+        // and `slideshow on/off` (same commands:: + apply_now seam), only the
+        // verb in the status line differs. See tests/media_keys.rs.
+        Cmd::Next => {
+            let entry = commands::cycle_current(paths, 1)?;
+            apply_now(paths);
+            println!(
+                "next → {} · {} ({})",
+                entry.id,
+                entry.title,
+                state_line(paths)
+            );
+        }
+        Cmd::Prev => {
+            let entry = commands::cycle_current(paths, -1)?;
+            apply_now(paths);
+            println!(
+                "prev → {} · {} ({})",
+                entry.id,
+                entry.title,
+                state_line(paths)
+            );
+        }
+        Cmd::Play => {
+            let mut cfg = cfg.clone();
+            commands::set_slideshow(
+                paths,
+                &mut cfg,
+                commands::SlideshowAction::On { interval: None },
+            )?;
+            apply_now(paths);
+        }
+        Cmd::Pause => {
+            let mut cfg = cfg.clone();
+            commands::set_slideshow(paths, &mut cfg, commands::SlideshowAction::Off)?;
+            apply_now(paths);
         }
         Cmd::Status { json, bench } => {
             if bench {

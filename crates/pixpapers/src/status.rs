@@ -8,6 +8,14 @@ use crate::ipc::{self, Request, StatusReport};
 pub fn local_report(paths: &Paths, cfg: &Config) -> StatusReport {
     let lib = Library::load(paths).ok().unwrap_or_default();
     let (variant_bytes, variants_on_disk) = scan_variants(paths, &lib);
+    // Read-only "track N of M" position (media-widget metadata). The index is
+    // the current entry's slot in the ordered library; `None` when nothing is
+    // set. Computed before `current` is moved into the report below.
+    let current_index = lib
+        .current
+        .as_deref()
+        .and_then(|c| lib.entries.iter().position(|e| e.id == c));
+    let library_len = lib.entries.len();
     StatusReport {
         daemon_running: false,
         daemon_pid: read_pid(paths),
@@ -27,6 +35,8 @@ pub fn local_report(paths: &Paths, cfg: &Config) -> StatusReport {
         // Without a daemon there is no output size to resolve `auto` /
         // `auto-content` against, so the concrete-preset detail stays absent.
         current_auto_detail: None,
+        current_index,
+        library_len: Some(library_len),
     }
 }
 
@@ -77,6 +87,13 @@ pub fn print_report(r: &StatusReport, cfg: &Config, json: bool) {
         cfg.dither
     );
     println!("current:  {}", r.current.as_deref().unwrap_or("(none)"));
+    // "track N of M" position — only when a current entry sits in the library
+    // (media-widget metadata). 1-based for humans; the JSON stays 0-based.
+    if let (Some(idx), Some(len)) = (r.current_index, r.library_len) {
+        if len > 0 {
+            println!("position: {} / {}", idx + 1, len);
+        }
+    }
     // When the current wallpaper resolves an `auto`/`auto-content` pixel, name
     // the concrete preset the daemon renders (only present with a live daemon).
     if let Some(d) = &r.current_auto_detail {
