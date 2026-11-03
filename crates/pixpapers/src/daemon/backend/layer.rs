@@ -22,7 +22,9 @@ use wayland_protocols::wp::fractional_scale::v1::client::{
     wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
     wp_fractional_scale_v1::{self, WpFractionalScaleV1},
 };
-use wayland_protocols::wp::viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter};
+use wayland_protocols::wp::viewporter::client::{
+    wp_viewport::WpViewport, wp_viewporter::WpViewporter,
+};
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
     zwlr_layer_surface_v1::{
@@ -73,9 +75,7 @@ pub fn select_scale_path(
     scale_num: Option<u32>,
 ) -> ScalePath {
     match scale_num {
-        Some(n)
-            if has_viewporter && has_fractional_scale && n >= FRAC_DEN && n % FRAC_DEN != 0 =>
-        {
+        Some(n) if has_viewporter && has_fractional_scale && n >= FRAC_DEN && n % FRAC_DEN != 0 => {
             ScalePath::Exact
         }
         _ => ScalePath::Legacy,
@@ -108,7 +108,11 @@ pub fn geometry(
     match path {
         ScalePath::Exact => {
             let n = frac_num.unwrap_or(FRAC_DEN);
-            (buffer_dim(cfg_w, n), buffer_dim(cfg_h, n), Some((cfg_w, cfg_h)))
+            (
+                buffer_dim(cfg_w, n),
+                buffer_dim(cfg_h, n),
+                Some((cfg_w, cfg_h)),
+            )
         }
         ScalePath::Legacy => (
             cfg_w.saturating_mul(legacy_scale.max(1)),
@@ -117,7 +121,6 @@ pub fn geometry(
         ),
     }
 }
-
 
 /// Double-buffered shm slot for one output.
 #[derive(Default)]
@@ -172,7 +175,13 @@ impl Out {
     fn recompute(&mut self, has_viewporter: bool, has_fscale: bool) -> bool {
         self.scale_path = select_scale_path(has_viewporter, has_fscale, self.frac_num);
         let (bw, bh, dest) = if self.configured {
-            geometry(self.scale_path, self.cfg_w, self.cfg_h, self.scale, self.frac_num)
+            geometry(
+                self.scale_path,
+                self.cfg_w,
+                self.cfg_h,
+                self.scale,
+                self.frac_num,
+            )
         } else {
             (0, 0, None)
         };
@@ -366,9 +375,11 @@ impl LayerState {
     /// size changed so the caller can re-render them.
     fn adopt_scale_helpers(&mut self) -> Vec<usize> {
         let (hv, hf) = self.scale_globals();
-        let (Some(vp), Some(fsm), Some(qh)) =
-            (self.viewporter.clone(), self.fscale_manager.clone(), self.qh.clone())
-        else {
+        let (Some(vp), Some(fsm), Some(qh)) = (
+            self.viewporter.clone(),
+            self.fscale_manager.clone(),
+            self.qh.clone(),
+        ) else {
             return Vec::new();
         };
         let mut changed = Vec::new();
@@ -645,11 +656,12 @@ impl Dispatch<WlRegistry, ()> for LayerState {
                     state.adopt_scale_globals(conn);
                 }
                 "wp_fractional_scale_manager_v1" => {
-                    state.fscale_manager = Some(registry.bind::<
-                        WpFractionalScaleManagerV1,
-                        _,
-                        _,
-                    >(name, version.min(1), qh, ()));
+                    state.fscale_manager = Some(registry.bind::<WpFractionalScaleManagerV1, _, _>(
+                        name,
+                        version.min(1),
+                        qh,
+                        (),
+                    ));
                     log::info!("fractional-scale manager bound");
                     state.adopt_scale_globals(conn);
                 }
@@ -999,13 +1011,28 @@ mod scale_tests {
     fn buffer_dims_exact_at_common_scales() {
         // The dev-panel case: 2560×1440 logical at 1.5 → the panel's own
         // 3840×2160 grid (not the legacy 5120×2880 oversample).
-        assert_eq!(geometry(ScalePath::Exact, 2560, 1440, 2, Some(S_150)).0, 3840);
-        assert_eq!(geometry(ScalePath::Exact, 2560, 1440, 2, Some(S_150)).1, 2160);
+        assert_eq!(
+            geometry(ScalePath::Exact, 2560, 1440, 2, Some(S_150)).0,
+            3840
+        );
+        assert_eq!(
+            geometry(ScalePath::Exact, 2560, 1440, 2, Some(S_150)).1,
+            2160
+        );
         // The container testbed case: 1920×1080 at 1.5 → 2880×1620.
-        assert_eq!(geometry(ScalePath::Exact, 1920, 1080, 2, Some(S_150)), (2880, 1620, Some((1920, 1080))));
+        assert_eq!(
+            geometry(ScalePath::Exact, 1920, 1080, 2, Some(S_150)),
+            (2880, 1620, Some((1920, 1080)))
+        );
         // 1.25 and 1.75 on the same logical size.
-        assert_eq!(geometry(ScalePath::Exact, 1920, 1080, 2, Some(S_125)), (2400, 1350, Some((1920, 1080))));
-        assert_eq!(geometry(ScalePath::Exact, 1920, 1080, 2, Some(S_175)), (3360, 1890, Some((1920, 1080))));
+        assert_eq!(
+            geometry(ScalePath::Exact, 1920, 1080, 2, Some(S_125)),
+            (2400, 1350, Some((1920, 1080)))
+        );
+        assert_eq!(
+            geometry(ScalePath::Exact, 1920, 1080, 2, Some(S_175)),
+            (3360, 1890, Some((1920, 1080)))
+        );
         // Integer numerators never reach the exact path (see path test),
         // but the math is defined: 1.0 and 2.0 are exact multiples.
         assert_eq!(buffer_dim(1920, S_100), 1920);
@@ -1017,11 +1044,21 @@ mod scale_tests {
         // Exact path: destination = configure size, whatever the scale.
         for n in [S_125, S_150, S_175] {
             let (bw, bh, dest) = geometry(ScalePath::Exact, 1366, 768, 2, Some(n));
-            assert_eq!(dest, Some((1366, 768)), "destination must be logical at scale {n}/120");
-            assert!(bw >= 1366 && bh >= 768, "buffer {bw}×{bh} must cover the logical size");
+            assert_eq!(
+                dest,
+                Some((1366, 768)),
+                "destination must be logical at scale {n}/120"
+            );
+            assert!(
+                bw >= 1366 && bh >= 768,
+                "buffer {bw}×{bh} must cover the logical size"
+            );
         }
         // Legacy path: no destination at all (viewport inert / reset).
-        assert_eq!(geometry(ScalePath::Legacy, 1920, 1080, 2, Some(S_150)).2, None);
+        assert_eq!(
+            geometry(ScalePath::Legacy, 1920, 1080, 2, Some(S_150)).2,
+            None
+        );
     }
 
     #[test]
@@ -1050,25 +1087,93 @@ mod scale_tests {
         // Full truth table over {viewporter?, fractional_scale?, scale}.
         // Exact requires BOTH protocols AND a non-integer scale.
         let cases: &[(&str, bool, bool, Option<u32>, ScalePath)] = &[
-            ("no protocols, fractional scale", false, false, Some(S_150), ScalePath::Legacy),
-            ("viewporter only", true, false, Some(S_150), ScalePath::Legacy),
-            ("fractional-scale only", false, true, Some(S_150), ScalePath::Legacy),
-            ("both protocols, fractional", true, true, Some(S_150), ScalePath::Exact),
-            ("both protocols, 1.25", true, true, Some(S_125), ScalePath::Exact),
-            ("both protocols, 1.75", true, true, Some(S_175), ScalePath::Exact),
-            ("both protocols, no preferred_scale yet", true, true, None, ScalePath::Legacy),
-            ("both protocols, integer 1.0", true, true, Some(S_100), ScalePath::Legacy),
-            ("both protocols, integer 2.0", true, true, Some(S_200), ScalePath::Legacy),
-            ("no protocols, integer", false, false, Some(S_200), ScalePath::Legacy),
-            ("degenerate 0/120 stays legacy", true, true, Some(0), ScalePath::Legacy),
-            ("sub-unit 90/120 (0.75) stays legacy", true, true, Some(90), ScalePath::Legacy),
+            (
+                "no protocols, fractional scale",
+                false,
+                false,
+                Some(S_150),
+                ScalePath::Legacy,
+            ),
+            (
+                "viewporter only",
+                true,
+                false,
+                Some(S_150),
+                ScalePath::Legacy,
+            ),
+            (
+                "fractional-scale only",
+                false,
+                true,
+                Some(S_150),
+                ScalePath::Legacy,
+            ),
+            (
+                "both protocols, fractional",
+                true,
+                true,
+                Some(S_150),
+                ScalePath::Exact,
+            ),
+            (
+                "both protocols, 1.25",
+                true,
+                true,
+                Some(S_125),
+                ScalePath::Exact,
+            ),
+            (
+                "both protocols, 1.75",
+                true,
+                true,
+                Some(S_175),
+                ScalePath::Exact,
+            ),
+            (
+                "both protocols, no preferred_scale yet",
+                true,
+                true,
+                None,
+                ScalePath::Legacy,
+            ),
+            (
+                "both protocols, integer 1.0",
+                true,
+                true,
+                Some(S_100),
+                ScalePath::Legacy,
+            ),
+            (
+                "both protocols, integer 2.0",
+                true,
+                true,
+                Some(S_200),
+                ScalePath::Legacy,
+            ),
+            (
+                "no protocols, integer",
+                false,
+                false,
+                Some(S_200),
+                ScalePath::Legacy,
+            ),
+            (
+                "degenerate 0/120 stays legacy",
+                true,
+                true,
+                Some(0),
+                ScalePath::Legacy,
+            ),
+            (
+                "sub-unit 90/120 (0.75) stays legacy",
+                true,
+                true,
+                Some(90),
+                ScalePath::Legacy,
+            ),
         ];
         for (what, vp, fs, num, want) in cases {
-            assert_eq!(
-                select_scale_path(*vp, *fs, *num),
-                *want,
-                "case: {what}"
-            );
+            assert_eq!(select_scale_path(*vp, *fs, *num), *want, "case: {what}");
         }
     }
 
@@ -1076,12 +1181,24 @@ mod scale_tests {
     fn integer_scales_keep_the_legacy_geometry_byte_for_byte() {
         // The legacy geometry is exactly the pre-feature formula:
         // buffer = logical × integer scale, no viewport destination.
-        assert_eq!(geometry(ScalePath::Legacy, 3840, 2160, 1, None), (3840, 2160, None));
-        assert_eq!(geometry(ScalePath::Legacy, 2560, 1440, 2, None), (5120, 2880, None));
-        assert_eq!(geometry(ScalePath::Legacy, 1920, 1080, 1, Some(S_100)), (1920, 1080, None));
+        assert_eq!(
+            geometry(ScalePath::Legacy, 3840, 2160, 1, None),
+            (3840, 2160, None)
+        );
+        assert_eq!(
+            geometry(ScalePath::Legacy, 2560, 1440, 2, None),
+            (5120, 2880, None)
+        );
+        assert_eq!(
+            geometry(ScalePath::Legacy, 1920, 1080, 1, Some(S_100)),
+            (1920, 1080, None)
+        );
         // Even with a fractional numerator in flight, a legacy decision
         // (missing protocol) uses the integer scale — the old oversample.
-        assert_eq!(geometry(ScalePath::Legacy, 2560, 1440, 2, Some(S_150)), (5120, 2880, None));
+        assert_eq!(
+            geometry(ScalePath::Legacy, 2560, 1440, 2, Some(S_150)),
+            (5120, 2880, None)
+        );
     }
 
     #[test]
@@ -1091,7 +1208,10 @@ mod scale_tests {
         // (the variant canvas cache keys on the concrete buffer size).
         for _ in 0..8 {
             assert_eq!(select_scale_path(true, true, Some(S_150)), ScalePath::Exact);
-            assert_eq!(select_scale_path(true, true, Some(S_100)), ScalePath::Legacy);
+            assert_eq!(
+                select_scale_path(true, true, Some(S_100)),
+                ScalePath::Legacy
+            );
         }
     }
 }
